@@ -233,6 +233,10 @@ def load_hf_dataset(name: str, *args: str, split: str, streaming: bool):
     return load_dataset(name, *args, split=split, streaming=streaming)
 
 
+def dataset_config_arg(config_name: str) -> tuple[str, ...]:
+    return () if config_name in {"", "default"} else (config_name,)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert recommended research datasets into RAAM-AgentCoder canonical JSONL."
@@ -246,6 +250,10 @@ def main() -> None:
     parser.add_argument("--max-swe-zero", type=int, default=0)
     parser.add_argument("--max-wildchat", type=int, default=0)
     parser.add_argument("--max-oasst", type=int, default=0)
+    parser.add_argument("--open-swe-config", default="openhands", choices=["openhands", "sweagent"])
+    parser.add_argument("--swe-zero-config", default="default")
+    parser.add_argument("--wildchat-config", default="default")
+    parser.add_argument("--oasst-config", default="default")
     parser.add_argument(
         "--starcoder2-extras",
         nargs="*",
@@ -267,7 +275,12 @@ def main() -> None:
     }
 
     if args.max_open_swe > 0:
-        ds = load_hf_dataset("nvidia/Open-SWE-Traces", split="train", streaming=args.streaming)
+        ds = load_hf_dataset(
+            "nvidia/Open-SWE-Traces",
+            *dataset_config_arg(args.open_swe_config),
+            split="train",
+            streaming=args.streaming,
+        )
         records = (
             openhands_row_to_record(
                 row,
@@ -278,11 +291,12 @@ def main() -> None:
             for row in ds
         )
         count = write_jsonl(out / "agent_traces" / "open_swe_traces.jsonl", iter_limited(records, args.max_open_swe))
-        manifest["sources"]["nvidia/Open-SWE-Traces"] = {"records": count}
+        manifest["sources"]["nvidia/Open-SWE-Traces"] = {"config": args.open_swe_config, "records": count}
 
     if args.max_swe_zero > 0:
         ds = load_hf_dataset(
             "nvidia/SWE-Zero-openhands-trajectories",
+            *dataset_config_arg(args.swe_zero_config),
             split="train",
             streaming=args.streaming,
         )
@@ -296,19 +310,32 @@ def main() -> None:
             for row in ds
         )
         count = write_jsonl(out / "agent_traces" / "swe_zero_openhands.jsonl", iter_limited(records, args.max_swe_zero))
-        manifest["sources"]["nvidia/SWE-Zero-openhands-trajectories"] = {"records": count}
+        manifest["sources"]["nvidia/SWE-Zero-openhands-trajectories"] = {
+            "config": args.swe_zero_config,
+            "records": count,
+        }
 
     if args.max_wildchat > 0:
-        ds = load_hf_dataset("allenai/WildChat", split="train", streaming=args.streaming)
+        ds = load_hf_dataset(
+            "allenai/WildChat",
+            *dataset_config_arg(args.wildchat_config),
+            split="train",
+            streaming=args.streaming,
+        )
         records = (wildchat_row_to_record(row, english_only=args.english_only) for row in ds)
         count = write_jsonl(out / "chat" / "wildchat.jsonl", iter_limited(records, args.max_wildchat))
-        manifest["sources"]["allenai/WildChat"] = {"records": count}
+        manifest["sources"]["allenai/WildChat"] = {"config": args.wildchat_config, "records": count}
 
     if args.max_oasst > 0:
-        ds = load_hf_dataset("OpenAssistant/oasst1", split="train", streaming=args.streaming)
+        ds = load_hf_dataset(
+            "OpenAssistant/oasst1",
+            *dataset_config_arg(args.oasst_config),
+            split="train",
+            streaming=args.streaming,
+        )
         records = oasst_rows_to_records(ds, english_only=args.english_only)
         count = write_jsonl(out / "chat" / "oasst1_pairs.jsonl", iter_limited(records, args.max_oasst))
-        manifest["sources"]["OpenAssistant/oasst1"] = {"records": count}
+        manifest["sources"]["OpenAssistant/oasst1"] = {"config": args.oasst_config, "records": count}
 
     for subset, limit in parse_subset_limits(args.starcoder2_extras):
         ds = load_hf_dataset("bigcode/starcoder2data-extras", subset, split="train", streaming=args.streaming)
