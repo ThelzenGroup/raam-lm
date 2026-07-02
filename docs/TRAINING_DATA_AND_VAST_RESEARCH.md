@@ -6,7 +6,7 @@ Last updated: 2026-07-02
 
 We are training RAAM-AgentCoder from scratch on a staged chat and software-engineering corpus, not on one monolithic dataset.
 
-The first paid Vast.ai run should use `configs/scratch/raam_agentcoder_50m.yaml` as a rehearsal. The first serious target is `configs/scratch/raam_agentcoder_100m.yaml`. The current research candidate is the RAAM compressed model with anchors and attention islands disabled, because the tiny multi-seed comparison favored that variant. Full RAAM stays available for long-context and ablation runs.
+The first paid Vast.ai run should use `configs/scratch/raam_agentcoder_50m.yaml` as a rehearsal. The first serious target is `configs/scratch/raam_agentcoder_100m.yaml`. The current research candidate is the compression-only RAAM model with anchors and attention islands disabled, because the matched 100M Vast `1000 -> 1100` step gate beat the pure Mamba-like baseline on validation loss while running faster and using less VRAM. Full RAAM stays available for long-context and ablation runs.
 
 ## Dataset Choice
 
@@ -229,6 +229,20 @@ Only move to `configs/scratch/raam_agentcoder_100m.yaml` after:
 - generation does not collapse into repeats immediately
 - agentic eval runs to completion
 - GPU memory leaves enough headroom for the selected batch and sequence length
+
+After the 100M two-way gate promotes compression-only RAAM, the Stage 5 candidate
+wrapper is:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate \
+STEPS=5000 RESUME_STEPS=5500 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+It uses a separate expanded data root so the tiny gate corpus remains reproducible.
 
 ## What We Are Not Doing Yet
 

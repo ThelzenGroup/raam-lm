@@ -182,6 +182,22 @@ After a base LM checkpoint is stable:
 
 Do not train on SWE-bench gold patches intended for held-out evaluation.
 
+The current Stage 5 entrypoint uses the 100M compression-only RAAM candidate, a
+separate expanded data root, and one resumable `last.pt` plus a compact model-only
+export:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate \
+STEPS=5000 RESUME_STEPS=5500 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+For a pure smoke of the Stage 5 wrapper, lower the sample and step counts with env
+overrides rather than editing the script.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

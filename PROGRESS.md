@@ -284,3 +284,22 @@ Agentic eval still reported `0.0` JSON tool-call validity and `0.0` mean patch a
 Interpretation: compression-only RAAM is now the best 100M candidate under this matched gate. It beat pure Mamba-like on validation loss while also running about 48% faster at the final logged step and using about 24% less peak VRAM. This reverses the 100-to-110-step gate and makes compression-only RAAM the next scaling default, with the caveat that the current dataset is still small and this is base-LM evidence, not final chat/agentic coding evidence.
 
 Next highest-value experiment: expand the real AgentCoder corpus substantially, repack with the same tokenizer policy, and run compression-only RAAM as the main 100M candidate long enough for chat and agentic coding evals to become meaningful. Keep pure Mamba-like as the fallback baseline, but do not spend on full RAAM until compression-only RAAM has a stronger data-scale result.
+
+## Stage 5 Candidate Entrypoint
+
+Added `scripts/vast_train_100m_candidate.sh` as a dedicated next-step wrapper. It defaults to the winning compression-only `configs/scratch/raam_agentcoder_100m.yaml`, a separate `/root/data/agentcoder_stage5` data root, moderate expanded dataset source limits, `5000 -> 5500` steps, `SAVE_EVERY=0`, a compact model-only export, and one optimizer-resumable `last.pt` for continuation.
+
+Updated:
+
+- `docs/STAGED_TRAINING_RUNBOOK.md`
+- `docs/VAST_TRAINING.md`
+- `docs/TRAINING_DATA_AND_VAST_RESEARCH.md`
+
+Validation:
+
+```bash
+bash -n scripts/vast_train_100m_candidate.sh scripts/vast_train_50m.sh scripts/vast_stage3_baselines.sh
+git diff --check
+```
+
+Result: passed.

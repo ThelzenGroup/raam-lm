@@ -286,3 +286,21 @@ STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=50 \
 EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_stage3_baselines.sh
 ```
+
+After the two-way gate promotes compression-only RAAM, start the expanded-corpus
+candidate run with:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate \
+STEPS=5000 RESUME_STEPS=5500 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+This wrapper defaults to `configs/scratch/raam_agentcoder_100m.yaml`, builds a
+separate Stage 5 tokenizer and packed corpus, exports `model_only_fp16.pt`, and keeps
+one optimizer-resumable `last.pt` unless `KEEP_TRAINING_CHECKPOINTS=0` is set. Use a
+larger Vast disk for this than for the tiny gates, and pull artifacts before stopping
+or destroying the instance.
