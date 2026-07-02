@@ -303,3 +303,46 @@ git diff --check
 ```
 
 Result: passed.
+
+## Stage 5 Candidate Smoke on Vast
+
+Updated `scripts/vast_train_100m_candidate.sh` to explicitly forward runtime overrides such as batch size, training sequence length, tokenizer vocab size, pack sequence length, gradient accumulation, and eval batch count. Validation:
+
+```bash
+bash -n scripts/vast_train_100m_candidate.sh scripts/vast_train_50m.sh scripts/vast_stage3_baselines.sh
+git diff --check
+```
+
+Result: passed. Pushed commit `7a63b7f` to `main`.
+
+Ran a tiny Stage 5 wrapper smoke on Vast RTX 5090:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5_smoke \
+RAW_DIR=/root/data/agentcoder_stage5_smoke/raw \
+PACKED_DIR=/root/data/agentcoder_stage5_smoke/packed_128 \
+TOKENIZER=/root/data/agentcoder_stage5_smoke/tokenizer.json \
+RUN_DIR=/root/raam-lm/runs/stage5_100m_candidate_smoke_20260702T220239Z/train \
+MAX_OPEN_SWE=2 MAX_SWE_ZERO=2 MAX_WILDCHAT=4 MAX_OASST=4 \
+STARCODER2_EXTRAS='documentation=4 issues=4' \
+VOCAB_SIZE=1024 SEQ_LEN=128 \
+BATCH_SIZE=1 TRAIN_SEQ_LEN=128 GRAD_ACCUMULATION_STEPS=1 EVAL_BATCHES=1 \
+STEPS=2 RESUME_STEPS=3 SAVE_EVERY=0 EVAL_EVERY=1 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+Artifact pull: `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_100m_candidate_smoke_20260702T220239Z`. No `.pt` files were pulled.
+
+Smoke evidence:
+
+- raw dataset manifest wrote records from Open-SWE-Traces, SWE-Zero OpenHands, WildChat, OASST1, StarCoder2 documentation, and StarCoder2 issues
+- tokenizer trained with vocab size `1024`
+- packed manifest wrote `298522` train tokens and `1453` validation tokens at sequence length `128`
+- train/resume completed through global step `2`
+- final smoke validation loss was `6.875584602355957`
+- generation and agentic eval completed
+- JSON tool-call validity and mean patch apply rate remained `0.0`, as expected for a 3-step smoke
+- `KEEP_TRAINING_CHECKPOINTS=0` removed all `.pt` files after eval
+- Vast disk remained at `1%` used
