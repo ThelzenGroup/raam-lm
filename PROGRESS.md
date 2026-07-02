@@ -146,3 +146,62 @@ The recommended first Vast dataset is a staged corpus: selected StarCoder2 extra
 The first paid training target remains `configs/scratch/raam_agentcoder_50m.yaml` for a 1000-step rehearsal, followed by resume/eval checks before moving to `configs/scratch/raam_agentcoder_100m.yaml`.
 
 Updated the Vast docs again after the publishing decision changed. Public GitHub is now the documented default path, with `.gitignore` added to keep datasets, packed token files, checkpoints, logs, caches, and local secrets out of the repository.
+
+## Vast 100M RAAM Mechanism Gate
+
+Added matched 100M RAAM mechanism configs and runbook commands:
+
+- `configs/scratch/raam_agentcoder_100m_full.yaml`
+- `configs/scratch/raam_agentcoder_100m_no_anchors.yaml`
+- `configs/scratch/raam_agentcoder_100m_no_attention_islands.yaml`
+- updated `docs/STAGED_TRAINING_RUNBOOK.md`
+- updated `docs/VAST_TRAINING.md`
+
+Local validation before pushing:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+paths = [
+    Path('configs/scratch/raam_agentcoder_100m_full.yaml'),
+    Path('configs/scratch/raam_agentcoder_100m_no_anchors.yaml'),
+    Path('configs/scratch/raam_agentcoder_100m_no_attention_islands.yaml'),
+]
+for path in paths:
+    data = yaml.safe_load(path.read_text())
+    print(path, data.get('attention_island_layers'), data.get('compression', {}).get('anchors_per_block'))
+PY
+bash -n scripts/vast_stage3_baselines.sh scripts/vast_pull_artifacts.sh scripts/vast_train_50m.sh
+git diff --check
+```
+
+Result: passed. Pushed commit `825fefb` to `main`.
+
+Vast run:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_raam_mechanisms_20260702T211130Z \
+CONFIGS='configs/scratch/raam_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m_no_attention_islands.yaml configs/scratch/raam_agentcoder_100m_no_anchors.yaml configs/scratch/raam_agentcoder_100m_full.yaml' \
+STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+Environment: Vast RTX 5090, Torch `2.12.0+cu130`, CUDA available, `mixer_backend: fallback_gated_conv`.
+
+| Variant | Config | Last Val Loss | Tokens/sec | Peak VRAM MB | FLOPs/token | Compression Ratio |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| compression-only RAAM | `raam_agentcoder_100m.yaml` | 10.3226 | 27746.2 | 12636.3 | 157843558 | 0.0625 |
+| anchors-only RAAM | `raam_agentcoder_100m_no_attention_islands.yaml` | 10.3277 | 27084.0 | 13372.4 | 157844582 | 0.1875 |
+| attention-islands-only RAAM | `raam_agentcoder_100m_no_anchors.yaml` | 10.3135 | 27533.3 | 12603.0 | 142137446 | 0.0625 |
+| full RAAM | `raam_agentcoder_100m_full.yaml` | 10.3221 | 25998.4 | 13320.7 | 144497766 | 0.1875 |
+
+Artifact pull: completed via SSH tar with `*.pt` excluded. Pulled artifacts contained logs, manifests, configs, tokenizer copies, train logs, generation smoke text, `agentic_eval.json`, `summary.json`, and `summary.md`, with zero checkpoint files.
+
+Interpretation: all four 100M RAAM mechanism variants fit and resume on the RTX 5090. In this very short 5-to-6-step gate, attention-islands-only RAAM had the lowest validation loss and lowest estimated FLOPs/token among the mechanism variants. Full RAAM fit but did not beat attention-islands-only on this tiny gate. Agentic generation scores remained `0.0` for JSON tool-call validity and patch apply rate, which is expected at this tiny token count and is not evidence of useful coding ability.
+
+Next highest-value experiment: run a longer matched 100M ablation, probably 100 to 110 steps first, for compression-only, attention-islands-only, full RAAM, and pure Mamba-like. Do not move to a full paid training run until that longer gate confirms which variant is worth scaling.
