@@ -29,6 +29,17 @@ from raam_lm.train_utils import (
 )
 
 
+def sync_run_dir(output_dir: Path, sync_root: Path | None) -> None:
+    if sync_root is None:
+        return
+    output_resolved = output_dir.resolve()
+    target = sync_root.expanduser().resolve() / output_dir.name
+    if target == output_resolved or output_resolved in target.parents:
+        raise ValueError(f"sync target {target} must not live inside output dir {output_resolved}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(output_dir, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp"))
+
+
 def _float(value: Any) -> float:
     return float(value.detach().cpu()) if isinstance(value, torch.Tensor) else float(value)
 
@@ -74,6 +85,12 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     parser.add_argument("--save-every", type=int, default=None)
     parser.add_argument("--eval-every", type=int, default=None)
+    parser.add_argument(
+        "--sync-dir",
+        default=None,
+        help="Optional mounted or external-sync directory that receives a copy of the run after saves.",
+    )
+    parser.add_argument("--sync-every", type=int, default=0, help="Also sync every N steps; 0 disables step sync.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -92,10 +109,12 @@ def main() -> None:
 
     output_dir = Path(config.train.output_dir)
     ckpt_dir = output_dir / "checkpoints"
+    sync_root = Path(args.sync_dir) if args.sync_dir else None
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(args.config, output_dir / "config.yaml")
     shutil.copyfile(args.tokenizer, output_dir / "tokenizer.json")
+    sync_run_dir(output_dir, sync_root)
 
     seed_all(config.train.seed)
     device = resolve_device(config.train.device)
@@ -127,6 +146,7 @@ def main() -> None:
         "resume_from": args.resume,
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    sync_run_dir(output_dir, sync_root)
     log_path = output_dir / "train_log.jsonl"
     mode = "a" if args.resume else "w"
     grad_accum = max(1, int(getattr(config.train, "gradient_accumulation_steps", 1)))
@@ -194,14 +214,17 @@ def main() -> None:
                     step % config.train.save_every == 0 or step == config.train.steps - 1
                 ):
                     save_checkpoint(ckpt_dir / f"step_{step:06d}.pt", model, optimizer, step, config, args.tokenizer)
+                    sync_run_dir(output_dir, sync_root)
+                elif args.sync_every and step % args.sync_every == 0:
+                    sync_run_dir(output_dir, sync_root)
     except KeyboardInterrupt:
         interrupted = True
     finally:
         final_step = max(start_step - 1, min(config.train.steps - 1, step if "step" in locals() else start_step - 1))
         save_checkpoint(ckpt_dir / "last.pt", model, optimizer, final_step, config, args.tokenizer)
+        sync_run_dir(output_dir, sync_root)
         print(f"saved_checkpoint path={ckpt_dir / 'last.pt'} step={final_step} interrupted={interrupted}")
 
 
 if __name__ == "__main__":
     main()
-

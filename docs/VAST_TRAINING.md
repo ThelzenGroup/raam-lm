@@ -79,7 +79,30 @@ For a non-5090 rehearsal host, set `ALLOW_NON_5090=1`. Do not use that override 
 
 ## First Vast Run
 
-Prepare the first research corpus:
+Because `/workspace` may not be persistent, always set up artifact pull before a paid
+run. From the local machine, this one-shot command copies the current run off the instance:
+
+```bash
+INSTANCE_ID=43627905 \
+REMOTE_RUN_DIR=/workspace/raam-lm/runs/raam_agentcoder_50m_rehearsal \
+LOCAL_DIR=runs/vast_backups/raam_agentcoder_50m_rehearsal \
+bash scripts/vast_pull_artifacts.sh
+```
+
+To watch and pull periodically during a longer run:
+
+```bash
+WATCH_INTERVAL=300 \
+INSTANCE_ID=43627905 \
+REMOTE_RUN_DIR=/workspace/raam-lm/runs/raam_agentcoder_50m_rehearsal \
+LOCAL_DIR=runs/vast_backups/raam_agentcoder_50m_rehearsal \
+bash scripts/vast_pull_artifacts.sh
+```
+
+If the instance has a persistent mount, also pass `--sync-dir` to `scripts/train.py`
+or set `SYNC_DIR=/path/to/persistent/mount` when using `scripts/vast_train_50m.sh`.
+
+Prepare the first research corpus manually:
 
 ```bash
 python scripts/prepare_agentcoder_research_data.py \
@@ -133,3 +156,38 @@ python scripts/train.py \
 ```
 
 Only move to `raam_agentcoder_100m` after validation loss, checkpoint resume, generation, and eval scripts are stable.
+
+## One-Command 50M Rehearsal
+
+On the Vast instance:
+
+```bash
+cd /workspace/raam-lm
+STEPS=20 RESUME_STEPS=25 bash scripts/vast_train_50m.sh
+```
+
+The script:
+
+- installs repo and optional dataset dependencies
+- streams a small real dataset sample by default
+- trains the tokenizer
+- packs the dataset at sequence length 2048
+- runs a bounded 50M rehearsal
+- resumes from `checkpoints/last.pt`
+- runs generation and agentic coding smoke evals
+
+Scale the dataset sample with:
+
+```bash
+MAX_OPEN_SWE=20000 \
+MAX_SWE_ZERO=20000 \
+MAX_WILDCHAT=20000 \
+MAX_OASST=10000 \
+STARCODER2_EXTRAS='documentation=20000 issues=20000 stackoverflow=20000 kaggle=10000' \
+STEPS=1000 RESUME_STEPS=1100 \
+bash scripts/vast_train_50m.sh
+```
+
+Do not treat the default tiny rehearsal as quality evidence. It only proves the
+dataset path, GPU memory, checkpoint/resume, generation, eval plumbing, and artifact
+sync workflow.
