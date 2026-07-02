@@ -94,6 +94,10 @@ tokenizers are copied reliably. To copy compact model-only exports too, set
 `INCLUDE_MODEL_EXPORT=1`. To copy every optimizer-resumable checkpoint, set
 `INCLUDE_CHECKPOINTS=1`.
 
+The pull helper uses tar transport by default to avoid accidental large checkpoint
+partials during watch pulls. Use `PULL_TRANSPORT=rsync` only when you intentionally
+want rsync behavior and have verified the exclude rules against the target run.
+
 To watch and pull periodically during a longer run:
 
 ```bash

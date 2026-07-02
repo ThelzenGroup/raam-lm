@@ -7,6 +7,7 @@ LOCAL_DIR="${LOCAL_DIR:-runs/vast_backups/$(basename "$REMOTE_RUN_DIR")}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 SSH_HOST="${SSH_HOST:-}"
 SSH_PORT="${SSH_PORT:-}"
+PULL_TRANSPORT="${PULL_TRANSPORT:-tar}"
 WATCH_INTERVAL="${WATCH_INTERVAL:-0}"
 INCLUDE_CHECKPOINTS="${INCLUDE_CHECKPOINTS:-0}"
 INCLUDE_MODEL_EXPORT="${INCLUDE_MODEL_EXPORT:-0}"
@@ -37,13 +38,15 @@ pull_once() {
   fi
   mkdir -p "$LOCAL_DIR"
 
-  if command -v rsync >/dev/null 2>&1 && ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -p "$port" "root@$host" 'command -v rsync >/dev/null 2>&1'; then
+  if [[ "$PULL_TRANSPORT" == "rsync" ]] && command -v rsync >/dev/null 2>&1 && ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -p "$port" "root@$host" 'command -v rsync >/dev/null 2>&1'; then
     rsync_args=(-az --partial --delete)
     if [[ "$INCLUDE_CHECKPOINTS" != "1" ]]; then
       if [[ "$INCLUDE_MODEL_EXPORT" == "1" ]]; then
         rsync_args+=(--include '/checkpoints/' --include '/checkpoints/model_only_*.pt')
+      else
+        rsync_args+=(--exclude '/checkpoints/')
       fi
-      rsync_args+=(--exclude '/checkpoints/*.pt')
+      rsync_args+=(--exclude '*/checkpoints/*.pt' --exclude '/checkpoints/*.pt')
     fi
     rsync "${rsync_args[@]}" \
       -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $port" \
