@@ -115,6 +115,24 @@ Only start after Stage 2 and Stage 3 pass. Use the 100M configs with the same co
 tokenizer, and schedule. Keep MTP and RAAM mechanisms isolated with ablations before
 claiming any architecture benefit.
 
+First prove fit/resume with the 100M matched configs:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_fit_gate \
+CONFIGS='configs/scratch/transformer_agentcoder_100m.yaml configs/scratch/pure_mamba_like_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m.yaml' \
+STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+Before any longer Stage 4 run, keep `scripts/vast_pull_artifacts.sh` running from the
+local machine. If direct SSH is unreliable, set `SSH_HOST` and `SSH_PORT` to the Vast
+relay endpoint shown by `vastai show instances`.
+
 ## Stage 5: Chat and Agentic Tuning
 
 After a base LM checkpoint is stable:

@@ -104,6 +104,18 @@ LOCAL_DIR=runs/vast_backups/raam_agentcoder_50m_rehearsal \
 bash scripts/vast_pull_artifacts.sh
 ```
 
+If direct SSH closes but the Vast relay works, override the SSH endpoint:
+
+```bash
+WATCH_INTERVAL=300 \
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+REMOTE_RUN_DIR=/root/raam-lm/runs/stage4_100m_fit_gate \
+LOCAL_DIR=runs/vast_backups/stage4_100m_fit_gate \
+bash scripts/vast_pull_artifacts.sh
+```
+
 If the instance has a persistent mount, also pass `--sync-dir` to `scripts/train.py`
 or set `SYNC_DIR=/path/to/persistent/mount` when using `scripts/vast_train_50m.sh`.
 
@@ -221,3 +233,17 @@ This compares `transformer_agentcoder_50m`, `pure_mamba_like_agentcoder_50m`, an
 `raam_agentcoder_50m` on the same tokenizer, packed data, sequence length, and step
 budget. It writes `runs/stage3_baselines/summary.json` and
 `runs/stage3_baselines/summary.md`.
+
+To run the same fit/resume gate with the 100M configs:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_fit_gate \
+CONFIGS='configs/scratch/transformer_agentcoder_100m.yaml configs/scratch/pure_mamba_like_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m.yaml' \
+STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
+bash scripts/vast_stage3_baselines.sh
+```

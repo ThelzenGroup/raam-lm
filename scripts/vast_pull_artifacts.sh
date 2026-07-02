@@ -5,6 +5,8 @@ INSTANCE_ID="${INSTANCE_ID:-43627905}"
 REMOTE_RUN_DIR="${REMOTE_RUN_DIR:-/workspace/raam-lm/runs/raam_agentcoder_50m_rehearsal}"
 LOCAL_DIR="${LOCAL_DIR:-runs/vast_backups/$(basename "$REMOTE_RUN_DIR")}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_HOST="${SSH_HOST:-}"
+SSH_PORT="${SSH_PORT:-}"
 WATCH_INTERVAL="${WATCH_INTERVAL:-0}"
 INCLUDE_CHECKPOINTS="${INCLUDE_CHECKPOINTS:-0}"
 INCLUDE_MODEL_EXPORT="${INCLUDE_MODEL_EXPORT:-0}"
@@ -24,10 +26,15 @@ PY
 
 pull_once() {
   local ssh_url host port
-  ssh_url="$(vastai ssh-url "$INSTANCE_ID")"
-  mapfile -t parsed < <(parse_ssh_url "$ssh_url")
-  host="${parsed[0]}"
-  port="${parsed[1]}"
+  if [[ -n "$SSH_HOST" && -n "$SSH_PORT" ]]; then
+    host="$SSH_HOST"
+    port="$SSH_PORT"
+  else
+    ssh_url="$(vastai ssh-url "$INSTANCE_ID")"
+    mapfile -t parsed < <(parse_ssh_url "$ssh_url")
+    host="${parsed[0]}"
+    port="${parsed[1]}"
+  fi
   mkdir -p "$LOCAL_DIR"
 
   if command -v rsync >/dev/null 2>&1 && ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -p "$port" "root@$host" 'command -v rsync >/dev/null 2>&1'; then
