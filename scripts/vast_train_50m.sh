@@ -43,14 +43,20 @@ mkdir -p "$RAW_DIR" "$PACKED_DIR" "$RUN_DIR"
 
 if [[ ! -f "$RAW_DIR/manifest.json" ]] && ! find "$RAW_DIR" -type f -name '*.jsonl' -size +0c | grep -q .; then
   read -r -a extras <<< "$STARCODER2_EXTRAS"
-  python scripts/prepare_agentcoder_research_data.py \
-    --output-dir "$RAW_DIR" \
-    --max-open-swe "$MAX_OPEN_SWE" \
-    --max-swe-zero "$MAX_SWE_ZERO" \
-    --max-wildchat "$MAX_WILDCHAT" \
-    --max-oasst "$MAX_OASST" \
-    --continue-on-source-error \
-    --starcoder2-extras "${extras[@]}"
+  if ! python scripts/prepare_agentcoder_research_data.py \
+      --output-dir "$RAW_DIR" \
+      --max-open-swe "$MAX_OPEN_SWE" \
+      --max-swe-zero "$MAX_SWE_ZERO" \
+      --max-wildchat "$MAX_WILDCHAT" \
+      --max-oasst "$MAX_OASST" \
+      --continue-on-source-error \
+      --starcoder2-extras "${extras[@]}"; then
+    if [[ -f "$RAW_DIR/manifest.json" ]] && python -m json.tool "$RAW_DIR/manifest.json" >/dev/null; then
+      echo "dataset preparation exited non-zero after writing a valid manifest; continuing with $RAW_DIR" >&2
+    else
+      exit 1
+    fi
+  fi
 elif [[ ! -f "$RAW_DIR/manifest.json" ]]; then
   echo "raw data exists without manifest; reusing existing JSONL files in $RAW_DIR"
 fi
