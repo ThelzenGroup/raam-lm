@@ -198,3 +198,26 @@ bash scripts/vast_train_50m.sh
 Do not treat the default tiny rehearsal as quality evidence. It only proves the
 dataset path, GPU memory, checkpoint/resume, generation, eval plumbing, and artifact
 sync workflow.
+
+## Matched Baseline Gate
+
+After `scripts/vast_train_50m.sh` has created a tokenizer and packed dataset, run:
+
+```bash
+cd /workspace/raam-lm
+STEPS=20 RESUME_STEPS=25 bash scripts/vast_stage3_baselines.sh
+```
+
+For the first paid smoke, use the same script with runtime-only memory overrides:
+
+```bash
+cd /workspace/raam-lm
+BATCH_SIZE=1 TRAIN_SEQ_LEN=512 GRAD_ACCUMULATION_STEPS=1 EVAL_BATCHES=1 \
+STEPS=1 RESUME_STEPS=2 SAVE_EVERY=1 EVAL_EVERY=1 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+This compares `transformer_agentcoder_50m`, `pure_mamba_like_agentcoder_50m`, and
+`raam_agentcoder_50m` on the same tokenizer, packed data, sequence length, and step
+budget. It writes `runs/stage3_baselines/summary.json` and
+`runs/stage3_baselines/summary.md`.

@@ -67,6 +67,9 @@ Pass criteria:
 
 Run the same packed dataset, tokenizer, optimizer, sequence length, and step budget:
 
+- `configs/scratch/transformer_agentcoder_50m.yaml`
+- `configs/scratch/pure_mamba_like_agentcoder_50m.yaml`
+- `configs/scratch/raam_agentcoder_50m.yaml`
 - `configs/scratch/transformer_agentcoder_100m.yaml`
 - `configs/scratch/pure_mamba_like_agentcoder_100m.yaml`
 - `configs/scratch/raam_agentcoder_100m.yaml`
@@ -78,6 +81,33 @@ Compare:
 - tokens/sec and wall-clock to target loss
 - generation smoke behavior
 - agentic eval output validity
+
+First run the 50M gate:
+
+```bash
+cd /workspace/raam-lm
+STEPS=20 RESUME_STEPS=25 bash scripts/vast_stage3_baselines.sh
+```
+
+For a cheaper OOM/resume smoke, shrink runtime-only training settings without
+editing the matched configs:
+
+```bash
+cd /workspace/raam-lm
+BATCH_SIZE=1 TRAIN_SEQ_LEN=512 GRAD_ACCUMULATION_STEPS=1 EVAL_BATCHES=1 \
+STEPS=1 RESUME_STEPS=2 SAVE_EVERY=1 EVAL_EVERY=1 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+This writes:
+
+```text
+runs/stage3_baselines/summary.json
+runs/stage3_baselines/summary.md
+```
+
+Use the 100M configs only after the 50M matched gate runs without OOMs or broken
+resume/eval behavior.
 
 ## Stage 4: 100M Scratch Candidate
 

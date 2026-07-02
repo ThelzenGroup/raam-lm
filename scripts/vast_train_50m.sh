@@ -14,6 +14,10 @@ STEPS="${STEPS:-20}"
 RESUME_STEPS="${RESUME_STEPS:-25}"
 SAVE_EVERY="${SAVE_EVERY:-5}"
 EVAL_EVERY="${EVAL_EVERY:-5}"
+BATCH_SIZE="${BATCH_SIZE:-}"
+TRAIN_SEQ_LEN="${TRAIN_SEQ_LEN:-}"
+GRAD_ACCUMULATION_STEPS="${GRAD_ACCUMULATION_STEPS:-}"
+EVAL_BATCHES="${EVAL_BATCHES:-}"
 VOCAB_SIZE="${VOCAB_SIZE:-32768}"
 SEQ_LEN="${SEQ_LEN:-2048}"
 EXPORT_CHECKPOINT="${EXPORT_CHECKPOINT:-1}"
@@ -67,6 +71,20 @@ if [[ -n "$SYNC_DIR" ]]; then
   sync_args=(--sync-dir "$SYNC_DIR" --sync-every "$SYNC_EVERY")
 fi
 
+train_overrides=()
+if [[ -n "$BATCH_SIZE" ]]; then
+  train_overrides+=(--batch-size "$BATCH_SIZE")
+fi
+if [[ -n "$TRAIN_SEQ_LEN" ]]; then
+  train_overrides+=(--seq-len "$TRAIN_SEQ_LEN")
+fi
+if [[ -n "$GRAD_ACCUMULATION_STEPS" ]]; then
+  train_overrides+=(--grad-accumulation-steps "$GRAD_ACCUMULATION_STEPS")
+fi
+if [[ -n "$EVAL_BATCHES" ]]; then
+  train_overrides+=(--eval-batches "$EVAL_BATCHES")
+fi
+
 python scripts/train.py \
   --config "$CONFIG" \
   --train-bin "$PACKED_DIR/train.bin" \
@@ -77,6 +95,7 @@ python scripts/train.py \
   --device cuda \
   --save-every "$SAVE_EVERY" \
   --eval-every "$EVAL_EVERY" \
+  "${train_overrides[@]}" \
   "${sync_args[@]}"
 
 if (( RESUME_STEPS > STEPS )); then
@@ -91,6 +110,7 @@ if (( RESUME_STEPS > STEPS )); then
     --device cuda \
     --save-every "$SAVE_EVERY" \
     --eval-every "$EVAL_EVERY" \
+    "${train_overrides[@]}" \
     "${sync_args[@]}"
 fi
 

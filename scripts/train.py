@@ -81,6 +81,10 @@ def main() -> None:
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--seq-len", type=int, default=None)
+    parser.add_argument("--grad-accumulation-steps", type=int, default=None)
+    parser.add_argument("--eval-batches", type=int, default=None)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--save-every", type=int, default=None)
@@ -98,6 +102,14 @@ def main() -> None:
     config.vocab_size = tokenizer.vocab_size
     if args.steps is not None:
         config.train.steps = args.steps
+    if args.batch_size is not None:
+        config.train.batch_size = args.batch_size
+    if args.seq_len is not None:
+        config.train.seq_len = args.seq_len
+    if args.grad_accumulation_steps is not None:
+        config.train.gradient_accumulation_steps = args.grad_accumulation_steps
+    if args.eval_batches is not None:
+        config.eval.eval_batches = args.eval_batches
     if args.device is not None:
         config.train.device = args.device
     if args.output_dir is not None:
