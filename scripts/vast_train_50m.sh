@@ -21,6 +21,7 @@ EVAL_BATCHES="${EVAL_BATCHES:-}"
 VOCAB_SIZE="${VOCAB_SIZE:-32768}"
 SEQ_LEN="${SEQ_LEN:-2048}"
 EXPORT_CHECKPOINT="${EXPORT_CHECKPOINT:-1}"
+KEEP_TRAINING_CHECKPOINTS="${KEEP_TRAINING_CHECKPOINTS:-1}"
 
 # Small defaults keep the first paid rehearsal cheap. Raise these for the real corpus.
 MAX_OPEN_SWE="${MAX_OPEN_SWE:-200}"
@@ -135,6 +136,10 @@ if [[ "$EXPORT_CHECKPOINT" == "1" ]]; then
     --checkpoint "$RUN_DIR/checkpoints/last.pt" \
     --output "$RUN_DIR/checkpoints/model_only_fp16.pt" \
     --dtype fp16
+fi
+
+if [[ "$KEEP_TRAINING_CHECKPOINTS" != "1" ]]; then
+  find "$RUN_DIR/checkpoints" -maxdepth 1 -type f \( -name 'last.pt' -o -name 'step_*.pt' \) -delete
 fi
 
 printf 'vast_train_50m_complete run_dir=%s raw_dir=%s packed_dir=%s tokenizer=%s\n' "$RUN_DIR" "$RAW_DIR" "$PACKED_DIR" "$TOKENIZER"

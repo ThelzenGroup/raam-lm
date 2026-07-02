@@ -98,6 +98,12 @@ The pull helper uses tar transport by default to avoid accidental large checkpoi
 partials during watch pulls. Use `PULL_TRANSPORT=rsync` only when you intentionally
 want rsync behavior and have verified the exclude rules against the target run.
 
+For runs where checkpoints are needed only for resume, generation, and eval, set
+`KEEP_TRAINING_CHECKPOINTS=0` on `scripts/vast_train_50m.sh` or
+`scripts/vast_stage3_baselines.sh`. The runner will delete `last.pt` and `step_*.pt`
+after eval/export for each completed config while keeping logs, manifests, summaries,
+and optional `model_only_*.pt` exports.
+
 To watch and pull periodically during a longer run:
 
 ```bash
@@ -263,5 +269,20 @@ TOKENIZER=/root/data/agentcoder/tokenizer.json \
 RUN_ROOT=/root/raam-lm/runs/stage4_100m_raam_mechanisms \
 CONFIGS='configs/scratch/raam_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m_no_attention_islands.yaml configs/scratch/raam_agentcoder_100m_no_anchors.yaml configs/scratch/raam_agentcoder_100m_full.yaml' \
 STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+For the longer two-way 100M quality/efficiency gate after the mechanism smoke:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_two_way_1000step \
+CONFIGS='configs/scratch/pure_mamba_like_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m.yaml' \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=50 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_stage3_baselines.sh
 ```

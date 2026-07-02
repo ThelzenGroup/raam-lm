@@ -17,6 +17,7 @@ EVAL_BATCHES="${EVAL_BATCHES:-}"
 SYNC_DIR="${SYNC_DIR:-}"
 SYNC_EVERY="${SYNC_EVERY:-5}"
 EXPORT_CHECKPOINT="${EXPORT_CHECKPOINT:-1}"
+KEEP_TRAINING_CHECKPOINTS="${KEEP_TRAINING_CHECKPOINTS:-1}"
 DEVICE="${DEVICE:-cuda}"
 CONFIGS="${CONFIGS:-configs/scratch/transformer_agentcoder_50m.yaml configs/scratch/pure_mamba_like_agentcoder_50m.yaml configs/scratch/raam_agentcoder_50m.yaml}"
 
@@ -109,6 +110,10 @@ for config in $CONFIGS; do
       --checkpoint "$run_dir/checkpoints/last.pt" \
       --output "$run_dir/checkpoints/model_only_fp16.pt" \
       --dtype fp16
+  fi
+
+  if [[ "$KEEP_TRAINING_CHECKPOINTS" != "1" ]]; then
+    find "$run_dir/checkpoints" -maxdepth 1 -type f \( -name 'last.pt' -o -name 'step_*.pt' \) -delete
   fi
 done
 

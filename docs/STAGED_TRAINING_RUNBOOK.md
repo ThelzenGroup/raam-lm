@@ -151,6 +151,26 @@ Before any longer Stage 4 run, keep `scripts/vast_pull_artifacts.sh` running fro
 local machine. If direct SSH is unreliable, set `SSH_HOST` and `SSH_PORT` to the Vast
 relay endpoint shown by `vastai show instances`.
 
+For the next longer quality/efficiency gate, compare only the current quality leader
+against the cheapest useful RAAM candidate and delete optimizer checkpoints after eval:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_two_way_1000step \
+CONFIGS='configs/scratch/pure_mamba_like_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m.yaml' \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=50 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+This keeps train logs, manifests, generation smoke output, agentic eval JSON, and
+summary files, but removes `last.pt` and `step_*.pt` files after each config has
+completed generation/eval.
+
 ## Stage 5: Chat and Agentic Tuning
 
 After a base LM checkpoint is stable:
