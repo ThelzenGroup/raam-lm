@@ -6,6 +6,7 @@ REMOTE_RUN_DIR="${REMOTE_RUN_DIR:-/workspace/raam-lm/runs/raam_agentcoder_50m_re
 LOCAL_DIR="${LOCAL_DIR:-runs/vast_backups/$(basename "$REMOTE_RUN_DIR")}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 WATCH_INTERVAL="${WATCH_INTERVAL:-0}"
+INCLUDE_CHECKPOINTS="${INCLUDE_CHECKPOINTS:-0}"
 
 parse_ssh_url() {
   python - "$1" <<'PY'
@@ -29,14 +30,22 @@ pull_once() {
   mkdir -p "$LOCAL_DIR"
 
   if command -v rsync >/dev/null 2>&1 && ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -p "$port" "root@$host" 'command -v rsync >/dev/null 2>&1'; then
-    rsync -az --partial --delete \
+    rsync_args=(-az --partial --delete)
+    if [[ "$INCLUDE_CHECKPOINTS" != "1" ]]; then
+      rsync_args+=(--exclude '/checkpoints/*.pt')
+    fi
+    rsync "${rsync_args[@]}" \
       -e "ssh -i $SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $port" \
       "root@$host:$REMOTE_RUN_DIR/" "$LOCAL_DIR/"
   else
     rm -rf "$LOCAL_DIR/.incoming"
     mkdir -p "$LOCAL_DIR/.incoming"
+    tar_exclude=""
+    if [[ "$INCLUDE_CHECKPOINTS" != "1" ]]; then
+      tar_exclude="--exclude='$(basename "$REMOTE_RUN_DIR")/checkpoints/*.pt'"
+    fi
     ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -p "$port" "root@$host" \
-      "tar -C '$(dirname "$REMOTE_RUN_DIR")' -cf - '$(basename "$REMOTE_RUN_DIR")'" \
+      "tar -C '$(dirname "$REMOTE_RUN_DIR")' $tar_exclude -cf - '$(basename "$REMOTE_RUN_DIR")'" \
       | tar -C "$LOCAL_DIR/.incoming" -xf -
     rm -rf "$LOCAL_DIR/current"
     mv "$LOCAL_DIR/.incoming/$(basename "$REMOTE_RUN_DIR")" "$LOCAL_DIR/current"

@@ -89,6 +89,9 @@ LOCAL_DIR=runs/vast_backups/raam_agentcoder_50m_rehearsal \
 bash scripts/vast_pull_artifacts.sh
 ```
 
+This skips large checkpoint `.pt` files by default so logs, manifests, evals, and
+tokenizers are copied reliably. To copy checkpoints too, set `INCLUDE_CHECKPOINTS=1`.
+
 To watch and pull periodically during a longer run:
 
 ```bash
