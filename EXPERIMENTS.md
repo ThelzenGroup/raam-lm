@@ -1,0 +1,69 @@
+# RAAM-LM Experiment Plan
+
+## First Tiny Experiment
+
+Run:
+
+- `transformer_tiny`
+- `pure_mamba_like_tiny`
+- `raam_tiny`
+- `raam_no_compression`
+- `raam_no_anchors`
+- `raam_no_attention_islands`
+- `raam_no_mtp`
+
+Use the same generated token stream, tokenizer identity, optimizer, schedule, batch size, and sequence length. Report loss versus tokens, approximate FLOPs, wall-clock time, throughput, memory, and causal-test status.
+
+## Small-Scale Experiment
+
+Use the 70M-style configs as practical templates. Run 10, 20, and 40 tokens-per-parameter sweeps when resources allow. Use seeds 17 and 29 for tiny/small runs if budget permits. Keep tokenizer, data order, optimizer, schedule, and sequence length matched across models.
+
+## RAAM-AgentCoder Scratch Track
+
+First prove the end-to-end pipeline locally:
+
+- tokenizer training on `examples/tiny_agentic.jsonl`
+- dataset packing
+- 20-step train
+- 5-step resume
+- generation from checkpoint
+- agentic coding eval smoke run
+
+Then run a Vast rehearsal:
+
+- `raam_agentcoder_50m`
+- 1000 steps
+- validation every 500 steps
+- checkpoint save/resume
+- generation samples
+- agentic eval outputs
+
+Only promote `raam_agentcoder_100m` after the 50M rehearsal shows stable validation loss, usable throughput, and reliable checkpoint resume.
+
+## Ablations
+
+- No compression.
+- Fixed compression instead of learned anchors.
+- No anchors.
+- No attention islands.
+- 1 versus 2 versus 3 attention islands.
+- MTP off, static, and curriculum.
+- Fallback mixer versus `mamba_ssm` if available.
+
+## Fair Comparisons
+
+Parameter-matched: match non-embedding parameter count where possible.
+
+FLOP-matched: compare by approximate activated training FLOPs/token and total token budget.
+
+Token-budget-matched: use the same tokenizer, data order, optimizer, schedule, and number of tokens.
+
+Long-context-matched: use the same length adaptation recipe and evaluation lengths.
+
+## Falsification Criteria
+
+- Kill the attention-island hypothesis if RAAM does not improve associative recall, passkey, or copy probes over `pure_mamba_like` and does not improve loss-per-FLOP or wall-clock-to-loss against Transformer.
+- Kill the dynamic compression hypothesis if it cannot achieve meaningful compression without a validation-loss or probe regression, or if fixed compression matches it at the same compression ratio.
+- Kill the anchor hypothesis if learned anchors retain too many tokens or rare-token/code/copy probes regress versus no-compression.
+- Kill the MTP add-on if next-token validation loss or time-to-target-loss is not improved versus MTP-off, or if calibration visibly worsens.
+- Kill the overall idea if gains vanish when tokenizer, data order, optimizer, sequence length, and schedule are matched.

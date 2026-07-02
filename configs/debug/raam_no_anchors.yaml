@@ -1,0 +1,51 @@
+model_name: raam
+vocab_size: 512
+max_seq_len: 64
+d_model: 64
+n_layers: 4
+n_heads: 4
+n_kv_heads: 4
+d_ff: 192
+dropout: 0.0
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: [2]
+use_mamba_or_fallback_backbone: true
+use_dynamic_hourglass_compression: true
+use_anchor_preserved_local_global: false
+use_attention_islands: true
+use_curriculum_mtp: true
+compression:
+  enabled: true
+  block_size: 8
+  anchors_per_block: 0
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  recon_loss_weight: 0.05
+  recon_loss_start_step: 5
+  recon_loss_ramp_steps: 20
+mtp:
+  enabled: true
+  max_horizon: 4
+  enabled_horizons: [2, 3, 4]
+  horizon_weights: {2: 0.10, 3: 0.06, 4: 0.04}
+  start_step: 5
+  horizon2_step: 5
+  horizon3_step: 10
+  horizon4_step: 15
+  ramp_steps: 10
+train:
+  seed: 17
+  batch_size: 2
+  seq_len: 64
+  steps: 30
+  lr: 0.0005
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  warmup_steps: 3
+  device: auto
+  dtype: auto
+  log_every: 5
+  output_dir: runs/debug_raam_no_anchors
+

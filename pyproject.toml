@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raam-lm"
+version = "0.1.0"
+description = "Research prototype for Reconstructive Anchor-Attention Mamba Language Model"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.0",
+  "pytest>=7",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+extras = [
+  "tqdm",
+  "datasets",
+  "wandb",
+  "deepspeed",
+  "codecarbon",
+  "mamba-ssm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Training outputs and heavyweight artifacts
+runs/
+wandb/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.npy
+*.npz
+
+# Local data and caches
+data/
+datasets/
+hf_cache/
+.cache/
+.huggingface/
+
+# Scratch and generated local deliverables
+work/
+outputs/
+
+# Archives
+*.tar
+*.tar.gz
+*.zip

@@ -1,0 +1,53 @@
+model_name: raam
+vocab_size: 50304
+max_seq_len: 2048
+d_model: 512
+n_layers: 12
+n_heads: 8
+n_kv_heads: 8
+d_ff: 2048
+dropout: 0.0
+rope_base: 10000
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: [5, 10]
+local_window: 256
+use_mamba_or_fallback_backbone: true
+use_dynamic_hourglass_compression: true
+use_anchor_preserved_local_global: true
+use_attention_islands: true
+use_curriculum_mtp: false
+compression:
+  enabled: true
+  block_size: 16
+  anchors_per_block: 4
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  anchor_score_hidden: 256
+  recon_loss_weight: 0.02
+  recon_loss_start_step: 1000
+  recon_loss_ramp_steps: 5000
+mtp:
+  enabled: false
+  max_horizon: 4
+  enabled_horizons: [2, 3, 4]
+  start_step: 1000
+  horizon2_step: 1000
+  horizon3_step: 3000
+  horizon4_step: 6000
+  ramp_steps: 5000
+train:
+  seed: 17
+  batch_size: 8
+  seq_len: 2048
+  steps: 100000
+  lr: 0.0003
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  warmup_steps: 1000
+  cosine_decay: true
+  device: auto
+  dtype: auto
+  output_dir: runs/scale_raam_70m
+
