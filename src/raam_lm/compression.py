@@ -11,6 +11,12 @@ from .config import CompressionConfig
 from .layers import RMSNorm
 
 
+def dtype_mask_min(tensor: torch.Tensor) -> float:
+    """Return a finite mask value representable by the tensor dtype."""
+
+    return torch.finfo(tensor.dtype).min if tensor.dtype.is_floating_point else -1e9
+
+
 @dataclass
 class CompressionOutput:
     compressed_x: torch.Tensor
@@ -89,18 +95,20 @@ class DynamicHourglassCompressor(nn.Module):
 
         pooled = cfg.pooled_chunks_per_block
         chunk_logits = self.chunk_scorer(blocks)
-        chunk_logits = chunk_logits.masked_fill(~valid.unsqueeze(-1), -1e9)
+        mask_min = dtype_mask_min(chunk_logits)
+        chunk_logits = chunk_logits.masked_fill(~valid.unsqueeze(-1), mask_min)
         chunk_weights = torch.softmax(chunk_logits, dim=2)
         chunk_tokens = torch.einsum("bnsp,bnsd->bnpd", chunk_weights, blocks)
 
         anchor_scores = self.anchor_scorer(blocks).squeeze(-1)
-        anchor_scores = anchor_scores.masked_fill(~valid, -1e9)
+        anchor_scores = anchor_scores.masked_fill(~valid, dtype_mask_min(anchor_scores))
         anchors = int(cfg.anchors_per_block)
         if anchors > 0:
             _, local_idx = torch.topk(anchor_scores, k=anchors, dim=-1)
             local_idx = torch.sort(local_idx, dim=-1).values
             valid_counts = valid.sum(dim=-1, keepdim=True).clamp_min(1)
             local_idx = torch.minimum(local_idx, valid_counts - 1)
+            anchor_valid_selected = torch.gather(valid, 2, local_idx)
             anchor_tokens = torch.gather(
                 blocks,
                 2,
@@ -109,6 +117,7 @@ class DynamicHourglassCompressor(nn.Module):
             anchor_scores_selected = torch.gather(anchor_scores, 2, local_idx)
         else:
             local_idx = torch.empty(bsz, n_blocks, 0, device=x.device, dtype=torch.long)
+            anchor_valid_selected = torch.empty(bsz, n_blocks, 0, device=x.device, dtype=torch.bool)
             anchor_tokens = torch.empty(bsz, n_blocks, 0, d_model, device=x.device, dtype=x.dtype)
             anchor_scores_selected = torch.empty(bsz, n_blocks, 0, device=x.device, dtype=x.dtype)
 
@@ -147,9 +156,10 @@ class DynamicHourglassCompressor(nn.Module):
             + pooled
             + torch.arange(anchors, device=x.device).view(1, anchors)
         )
+        valid_anchor_scores = anchor_scores_selected.masked_select(anchor_valid_selected)
         mean_anchor_score = (
-            anchor_scores_selected.masked_select(anchor_scores_selected > -1e8).mean()
-            if anchors > 0
+            valid_anchor_scores.mean()
+            if valid_anchor_scores.numel() > 0
             else torch.zeros((), device=x.device, dtype=x.dtype)
         )
         metadata: dict[str, torch.Tensor | int | float] = {
