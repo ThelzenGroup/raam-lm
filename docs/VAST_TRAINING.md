@@ -107,6 +107,8 @@ Prepare the first research corpus manually:
 ```bash
 python scripts/prepare_agentcoder_research_data.py \
   --output-dir /data/agentcoder/raw \
+  --open-swe-config openhands \
+  --open-swe-split minimax_m25 \
   --max-open-swe 20000 \
   --max-swe-zero 20000 \
   --max-wildchat 20000 \
