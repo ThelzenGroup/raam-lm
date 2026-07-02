@@ -35,7 +35,7 @@ uv pip install datasets tqdm huggingface_hub
 
 mkdir -p "$RAW_DIR" "$PACKED_DIR" "$RUN_DIR"
 
-if [[ ! -f "$RAW_DIR/manifest.json" ]]; then
+if [[ ! -f "$RAW_DIR/manifest.json" ]] && ! find "$RAW_DIR" -type f -name '*.jsonl' -size +0c | grep -q .; then
   read -r -a extras <<< "$STARCODER2_EXTRAS"
   python scripts/prepare_agentcoder_research_data.py \
     --output-dir "$RAW_DIR" \
@@ -44,6 +44,8 @@ if [[ ! -f "$RAW_DIR/manifest.json" ]]; then
     --max-wildchat "$MAX_WILDCHAT" \
     --max-oasst "$MAX_OASST" \
     --starcoder2-extras "${extras[@]}"
+elif [[ ! -f "$RAW_DIR/manifest.json" ]]; then
+  echo "raw data exists without manifest; reusing existing JSONL files in $RAW_DIR"
 fi
 
 if [[ ! -f "$TOKENIZER" ]]; then
