@@ -40,6 +40,13 @@ Then run a Vast rehearsal:
 
 Only promote `raam_agentcoder_100m` after the 50M rehearsal shows stable validation loss, usable throughput, and reliable checkpoint resume.
 
+Current Vast evidence: in a matched 100M `1000 -> 1100` step gate on the first
+packed AgentCoder corpus, compression-only `raam_agentcoder_100m` beat
+`pure_mamba_like_agentcoder_100m` on validation loss while running faster and using
+less peak VRAM. This promotes compression-only RAAM as the next scaling default, but
+it is still base-LM evidence only: chat/tool-call validity and patch-apply eval
+scores are not useful yet.
+
 ## Ablations
 
 - No compression.

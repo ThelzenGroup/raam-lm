@@ -237,3 +237,50 @@ Agentic eval remained at `0.0` JSON tool-call validity and `0.0` patch apply rat
 Interpretation: pure Mamba-like is currently the best-quality model in this matched 100M gate. The best RAAM variant is compression-only RAAM: it has the lowest RAAM validation loss and is much faster with materially lower peak VRAM than pure Mamba-like. The earlier 5-to-6-step attention-islands lead did not hold up at 100-to-110 steps. Full RAAM fit, resumed, and ran quickly, but it did not beat the cheaper compression-only RAAM variant, so it should not be the next scaling default.
 
 Next highest-value experiment: run a longer two-way 100M quality/efficiency gate between `pure_mamba_like_agentcoder_100m.yaml` and `raam_agentcoder_100m.yaml`, such as 500 to 550 or 1000 to 1100 steps, before spending on a larger full training run. The decision question is whether compression-only RAAM can close enough validation-loss gap to justify its speed and VRAM advantage for the from-scratch chat and agentic coding target.
+
+## Vast 100M Two-Way 1000-Step Gate
+
+Added disk-safe checkpoint cleanup to the Vast runners before this run:
+
+- `scripts/vast_stage3_baselines.sh`
+- `scripts/vast_train_50m.sh`
+- `docs/STAGED_TRAINING_RUNBOOK.md`
+- `docs/VAST_TRAINING.md`
+
+Validation before pushing:
+
+```bash
+bash -n scripts/vast_stage3_baselines.sh scripts/vast_train_50m.sh
+git diff --check
+```
+
+Result: passed. Pushed commit `4d49274` to `main`.
+
+Ran the longer two-way 100M gate on Vast RTX 5090:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_two_way_1000step_20260702T213737Z \
+CONFIGS='configs/scratch/pure_mamba_like_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m.yaml' \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=50 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+Artifact pull: `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage4_100m_two_way_1000step_20260702T213737Z`. No `.pt` files were pulled. Both Vast instances were confirmed `stopped/exited` after the artifact pull.
+
+Environment: Vast RTX 5090, Torch `2.12.0+cu130`, CUDA available, `mixer_backend: fallback_gated_conv`.
+
+| Variant | Config | Last Step | Tokens Seen | Last Val Loss | Val Loss Delta | Tokens/sec | Peak VRAM MB | Non-Emb Params | FLOPs/token | Compression Ratio |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| pure Mamba-like | `pure_mamba_like_agentcoder_100m.yaml` | 1099 | 72089600 | 3.84068 | -6.63019 | 128065 | 20741.7 | 66947584 | 157777510 | 1.0 |
+| compression-only RAAM | `raam_agentcoder_100m.yaml` | 1099 | 72089600 | 3.17354 | -7.21669 | 189302 | 15744.2 | 67867138 | 157843558 | 0.0625 |
+
+Agentic eval still reported `0.0` JSON tool-call validity and `0.0` mean patch apply rate for both models. The generated text improved compared with very short runs but is not yet useful chat or coding behavior.
+
+Interpretation: compression-only RAAM is now the best 100M candidate under this matched gate. It beat pure Mamba-like on validation loss while also running about 48% faster at the final logged step and using about 24% less peak VRAM. This reverses the 100-to-110-step gate and makes compression-only RAAM the next scaling default, with the caveat that the current dataset is still small and this is base-LM evidence, not final chat/agentic coding evidence.
+
+Next highest-value experiment: expand the real AgentCoder corpus substantially, repack with the same tokenizer policy, and run compression-only RAAM as the main 100M candidate long enough for chat and agentic coding evals to become meaningful. Keep pure Mamba-like as the fallback baseline, but do not spend on full RAAM until compression-only RAAM has a stronger data-scale result.
