@@ -129,6 +129,24 @@ STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
 bash scripts/vast_stage3_baselines.sh
 ```
 
+Then isolate the actual RAAM mechanisms before longer training:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder \
+PACKED_DIR=/root/data/agentcoder/packed_2048 \
+TOKENIZER=/root/data/agentcoder/tokenizer.json \
+RUN_ROOT=/root/raam-lm/runs/stage4_100m_raam_mechanisms \
+CONFIGS='configs/scratch/raam_agentcoder_100m.yaml configs/scratch/raam_agentcoder_100m_no_attention_islands.yaml configs/scratch/raam_agentcoder_100m_no_anchors.yaml configs/scratch/raam_agentcoder_100m_full.yaml' \
+STEPS=5 RESUME_STEPS=6 SAVE_EVERY=5 EVAL_EVERY=5 EXPORT_CHECKPOINT=0 \
+bash scripts/vast_stage3_baselines.sh
+```
+
+The existing `raam_agentcoder_100m.yaml` is the cheapest compression-only RAAM
+variant. `raam_agentcoder_100m_full.yaml` enables learned anchors and two exact
+attention islands on the compressed/global stream.
+
 Before any longer Stage 4 run, keep `scripts/vast_pull_artifacts.sh` running from the
 local machine. If direct SSH is unreliable, set `SSH_HOST` and `SSH_PORT` to the Vast
 relay endpoint shown by `vastai show instances`.

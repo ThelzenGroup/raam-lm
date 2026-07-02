@@ -1,0 +1,60 @@
+model_name: raam
+vocab_size: 32768
+max_seq_len: 2048
+d_model: 512
+n_layers: 14
+n_heads: 8
+n_kv_heads: 8
+d_ff: 2048
+dropout: 0.0
+rope_base: 10000
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: [7, 11]
+use_mamba_or_fallback_backbone: true
+use_dynamic_hourglass_compression: true
+use_anchor_preserved_local_global: true
+use_attention_islands: true
+use_curriculum_mtp: true
+compression:
+  enabled: true
+  block_size: 16
+  anchors_per_block: 2
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  anchor_score_hidden: 256
+  recon_loss_weight: 0.02
+  recon_loss_start_step: 1000
+  recon_loss_ramp_steps: 5000
+mtp:
+  enabled: true
+  max_horizon: 4
+  enabled_horizons: [2, 3, 4]
+  horizon_weights: {2: 0.10, 3: 0.06, 4: 0.04}
+  start_step: 1000
+  horizon2_step: 1000
+  horizon3_step: 3000
+  horizon4_step: 6000
+  ramp_steps: 5000
+train:
+  seed: 17
+  batch_size: 8
+  seq_len: 2048
+  steps: 300000
+  lr: 0.00035
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  gradient_accumulation_steps: 4
+  warmup_steps: 1500
+  cosine_decay: true
+  device: auto
+  dtype: auto
+  log_every: 10
+  eval_every: 500
+  save_every: 1000
+  output_dir: runs/raam_agentcoder_100m_full
+eval:
+  eval_batches: 20
+  probe_lengths: [512, 1024, 2048]
+  long_context_lengths: [2048, 4096, 8192]
