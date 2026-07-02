@@ -90,7 +90,9 @@ bash scripts/vast_pull_artifacts.sh
 ```
 
 This skips large checkpoint `.pt` files by default so logs, manifests, evals, and
-tokenizers are copied reliably. To copy checkpoints too, set `INCLUDE_CHECKPOINTS=1`.
+tokenizers are copied reliably. To copy compact model-only exports too, set
+`INCLUDE_MODEL_EXPORT=1`. To copy every optimizer-resumable checkpoint, set
+`INCLUDE_CHECKPOINTS=1`.
 
 To watch and pull periodically during a longer run:
 

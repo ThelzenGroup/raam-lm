@@ -16,6 +16,7 @@ SAVE_EVERY="${SAVE_EVERY:-5}"
 EVAL_EVERY="${EVAL_EVERY:-5}"
 VOCAB_SIZE="${VOCAB_SIZE:-32768}"
 SEQ_LEN="${SEQ_LEN:-2048}"
+EXPORT_CHECKPOINT="${EXPORT_CHECKPOINT:-1}"
 
 # Small defaults keep the first paid rehearsal cheap. Raise these for the real corpus.
 MAX_OPEN_SWE="${MAX_OPEN_SWE:-200}"
@@ -43,6 +44,7 @@ if [[ ! -f "$RAW_DIR/manifest.json" ]] && ! find "$RAW_DIR" -type f -name '*.jso
     --max-swe-zero "$MAX_SWE_ZERO" \
     --max-wildchat "$MAX_WILDCHAT" \
     --max-oasst "$MAX_OASST" \
+    --continue-on-source-error \
     --starcoder2-extras "${extras[@]}"
 elif [[ ! -f "$RAW_DIR/manifest.json" ]]; then
   echo "raw data exists without manifest; reusing existing JSONL files in $RAW_DIR"
@@ -107,5 +109,12 @@ python scripts/eval_agentic_coding.py \
   --checkpoint "$RUN_DIR/checkpoints/last.pt" \
   --device cuda \
   --output "$RUN_DIR/agentic_eval.json"
+
+if [[ "$EXPORT_CHECKPOINT" == "1" ]]; then
+  python scripts/export_checkpoint.py \
+    --checkpoint "$RUN_DIR/checkpoints/last.pt" \
+    --output "$RUN_DIR/checkpoints/model_only_fp16.pt" \
+    --dtype fp16
+fi
 
 printf 'vast_train_50m_complete run_dir=%s raw_dir=%s packed_dir=%s tokenizer=%s\n' "$RUN_DIR" "$RAW_DIR" "$PACKED_DIR" "$TOKENIZER"

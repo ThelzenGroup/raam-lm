@@ -71,9 +71,9 @@ def iter_text_files(paths: Iterable[str | Path]) -> Iterable[Path]:
         path = Path(raw)
         if path.is_dir():
             for child in sorted(path.rglob("*")):
-                if child.is_file() and child.suffix.lower() in allowed:
+                if child.is_file() and child.name != "manifest.json" and child.suffix.lower() in allowed:
                     yield child
-        elif path.is_file():
+        elif path.is_file() and path.name != "manifest.json":
             yield path
 
 
@@ -186,4 +186,3 @@ def train_agent_tokenizer(
             continue
         vocab[token] = len(vocab)
     return AgentCoderTokenizer(vocab)
-

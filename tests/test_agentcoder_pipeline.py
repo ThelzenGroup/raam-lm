@@ -87,6 +87,20 @@ def test_dataset_packing(tmp_path):
     assert (tmp_path / "packed" / "val.bin").exists()
 
 
+def test_dataset_packing_skips_manifest_metadata(tmp_path):
+    data_dir = tmp_path / "raw"
+    data_dir.mkdir()
+    data = data_dir / "tiny.jsonl"
+    write_tiny_agentic(data)
+    (data_dir / "manifest.json").write_text(json.dumps({"not": "training data"}) + "\n")
+
+    tokenizer = train_agent_tokenizer([data_dir], vocab_size=384)
+    manifest = pack_documents([data_dir], tokenizer, tmp_path / "packed", seq_len=32, val_fraction=0.5)
+
+    sources = [doc["source"] for doc in manifest["documents"]]
+    assert all("manifest.json" not in source for source in sources)
+
+
 def test_binary_shard_packing(tmp_path):
     shard = tmp_path / "tokens.bin"
     write_int32_tokens(shard, list(range(20)))
