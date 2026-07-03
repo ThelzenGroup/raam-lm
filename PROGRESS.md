@@ -2634,6 +2634,14 @@ Local artifact pull:
 
 Checkpoint weights were not pulled.
 
+After artifact pull, the remote RAAM and Transformer `last.pt` files for this
+run were deleted, and both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
+
 Interpretation: RAAM has a small advantage over the matched Transformer on exact
 seen value retrieval under this tiny schedule, but neither model has learned
 covered-value recombination or held-out value continuation. Together with the
