@@ -288,6 +288,11 @@ EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
+This path has been smoke-tested from the step-800 `model_only_fp16.pt`: the run
+manifest recorded `resume_mode: model_only`, `resume_optimizer_loaded: false`, and
+`resume_start_step: 801`, then logged training steps 801-804. Treat that smoke as
+tooling validation only; it used a tiny eval setting and is not a quality gate.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

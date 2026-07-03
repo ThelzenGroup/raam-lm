@@ -799,3 +799,57 @@ Added model-only resume support:
 
 This makes the exported step-800 `model_only_fp16.pt` usable for continuation
 smoke tests and longer fresh-optimizer gates.
+
+## Stage 5 Model-Only Resume Smoke
+
+Pushed `c83bdac` with model-only resume support, then ran a short Vast RTX 5090
+continuation smoke from the exported step-800 model-only checkpoint:
+
+```bash
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+RUN_ID=stage5_raam_agentcoder_100m_model_only_resume_smoke_20260703T020833Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+START_CHECKPOINT=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z/train/checkpoints/model_only_fp16.pt \
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+STEPS=805 RESUME_STEPS=805 SAVE_EVERY=0 EVAL_EVERY=2 EVAL_BATCHES=1 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_model_only_resume_smoke_20260703T020833Z`.
+The pull is about 768 KB and contains no `.pt` files. Both Vast RTX 5090
+instances were stopped/exited after the pull.
+
+Manifest evidence:
+
+- `resume_mode: model_only`
+- `resume_optimizer_loaded: false`
+- `resume_start_step: 801`
+- `resume_from: /root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z/train/checkpoints/model_only_fp16.pt`
+
+Training evidence:
+
+| Metric | Value |
+| --- | ---: |
+| Logged steps | 4 |
+| First logged step | 801 |
+| Last logged step | 804 |
+| Final train loss | 3.034564256668091 |
+| Final validation loss | 3.590768814086914 |
+| Final tokens/sec | 239544.6837340605 |
+| Peak allocated VRAM MB | 12309.60498046875 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Interpretation: this smoke validates that the exported `model_only_fp16.pt`
+checkpoint can seed further training with a fresh optimizer. The validation
+numbers are not a quality result because the smoke used `EVAL_BATCHES=1` and only
+four training steps. The next quality gate should use the same model-only start
+with normal eval batches and a longer continuation window.
