@@ -174,3 +174,24 @@ def test_raam_atomic_hybrid1_anchor_attention_config_uses_minimal_reserved_token
     assert payload["compression"]["anchors_per_block"] == 4
     assert payload["compression"]["anchor_selection"] == "hybrid_token_id_learned"
     assert payload["compression"]["token_id_anchor_count"] == 1
+
+
+def test_raam_atomic_hybrid1_copy_head_config_enables_pointer_route():
+    config_path = Path("configs/scratch/raam_agentcoder_atomic_hybrid1_copy_head_gate.yaml")
+    payload = yaml.safe_load(config_path.read_text())
+
+    assert payload["model_name"] == "raam"
+    assert payload["copy_head"]["enabled"] is True
+    assert payload["copy_head"]["include_current_token"] is True
+    assert payload["compression"]["anchor_selection"] == "hybrid_token_id_learned"
+    assert payload["compression"]["token_id_anchor_count"] == 1
+
+
+def test_transformer_atomic_copy_head_config_enables_pointer_route():
+    config_path = Path("configs/scratch/transformer_agentcoder_atomic_copy_head_gate.yaml")
+    payload = yaml.safe_load(config_path.read_text())
+
+    assert payload["model_name"] == "transformer"
+    assert payload["copy_head"]["enabled"] is True
+    assert payload["use_dynamic_hourglass_compression"] is False
+    assert payload["compression"]["enabled"] is False

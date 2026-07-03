@@ -13,6 +13,7 @@ from .compression import (
     unsort_sequence,
 )
 from .config import ModelConfig
+from .copy_head import CausalCopyHead
 from .layers import RMSNorm, causal_positions, init_weights
 from .losses import compute_lm_losses, current_recon_weight
 from .mixer import MixerBlock
@@ -123,6 +124,11 @@ class RAAMForCausalLM(nn.Module):
         )
         self.norm = RMSNorm(config.d_model)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.copy_head = (
+            CausalCopyHead(config.d_model, config.vocab_size, config.copy_head)
+            if config.copy_head.enabled
+            else None
+        )
         self.mtp_heads = (
             MTPHeads(config.d_model, config.vocab_size, config.mtp)
             if config.mtp.enabled and config.use_curriculum_mtp
@@ -184,6 +190,8 @@ class RAAMForCausalLM(nn.Module):
             x = block(x)
         hidden = self.norm(x)
         logits = self.lm_head(hidden)
+        if self.copy_head is not None:
+            logits = self.copy_head(hidden, input_ids, logits)
         recon_weight = current_recon_weight(self.config.compression, global_step)
         aux = {
             "model_name": "raam",
@@ -193,6 +201,7 @@ class RAAMForCausalLM(nn.Module):
             "anchor_token_fraction": float(anchor_fraction),
             "anchor_selection": self.config.compression.anchor_selection,
             "attention_island_layers": list(self.config.attention_island_layers),
+            "copy_head_enabled": bool(self.copy_head is not None),
         }
         return _loss_output(
             logits,

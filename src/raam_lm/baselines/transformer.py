@@ -7,6 +7,7 @@ from torch import nn
 
 from raam_lm.attention import TransformerBlock
 from raam_lm.config import ModelConfig
+from raam_lm.copy_head import CausalCopyHead
 from raam_lm.layers import RMSNorm, causal_positions, init_weights
 from raam_lm.losses import compute_lm_losses
 from raam_lm.mtp import MTPHeads
@@ -32,6 +33,11 @@ class DenseTransformerForCausalLM(nn.Module):
         )
         self.norm = RMSNorm(config.d_model)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.copy_head = (
+            CausalCopyHead(config.d_model, config.vocab_size, config.copy_head)
+            if config.copy_head.enabled
+            else None
+        )
         self.mtp_heads = MTPHeads(config.d_model, config.vocab_size, config.mtp) if config.mtp.enabled else None
         self.apply(init_weights)
         if config.tie_embeddings:
@@ -50,6 +56,8 @@ class DenseTransformerForCausalLM(nn.Module):
             x = block(x, origins=origins)
         hidden = self.norm(x)
         logits = self.lm_head(hidden)
+        if self.copy_head is not None:
+            logits = self.copy_head(hidden, input_ids, logits)
         output = compute_lm_losses(
             logits,
             labels,
@@ -70,5 +78,6 @@ class DenseTransformerForCausalLM(nn.Module):
                 "compression_ratio": 1.0,
                 "mean_anchor_score": 0.0,
                 "anchor_token_fraction": 0.0,
+                "copy_head_enabled": bool(self.copy_head is not None),
             },
         }

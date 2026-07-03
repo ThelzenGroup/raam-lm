@@ -252,6 +252,7 @@ def main() -> None:
                     "estimated_total_flops_seen": est_flops * tokens_per_step * (step + 1),
                     "compression_ratio": aux.get("compression_ratio", 1.0),
                     "mixer_backend": aux.get("mixer_backend", "unknown"),
+                    "copy_head_enabled": bool(aux.get("copy_head_enabled", False)),
                 }
                 if last_loss_mask is not None:
                     metrics["loss_mask_fraction"] = float(last_loss_mask.mean().detach().cpu())

@@ -1,0 +1,68 @@
+model_name: raam
+vocab_size: 1024
+max_seq_len: 128
+d_model: 128
+n_layers: 4
+n_heads: 4
+n_kv_heads: 4
+d_ff: 512
+dropout: 0.0
+rope_base: 10000
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: [1, 2]
+use_mamba_or_fallback_backbone: true
+use_dynamic_hourglass_compression: true
+use_anchor_preserved_local_global: true
+use_attention_islands: true
+use_curriculum_mtp: false
+copy_head:
+  enabled: true
+  d_copy: 128
+  logit_scale: 4.0
+  temperature: 1.0
+  include_current_token: true
+compression:
+  enabled: true
+  block_size: 8
+  anchors_per_block: 4
+  anchor_selection: hybrid_token_id_learned
+  token_id_anchor_count: 1
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  anchor_score_hidden: 64
+  recon_loss_weight: 0.0
+  recon_loss_start_step: 100000000
+  recon_loss_ramp_steps: 1000
+mtp:
+  enabled: false
+  max_horizon: 4
+  enabled_horizons: []
+  horizon_weights: {}
+  start_step: 100000000
+  horizon2_step: 100000000
+  horizon3_step: 100000000
+  horizon4_step: 100000000
+  ramp_steps: 1000
+train:
+  seed: 17
+  batch_size: 8
+  seq_len: 96
+  steps: 1200
+  lr: 0.001
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 10
+  cosine_decay: false
+  device: auto
+  dtype: auto
+  log_every: 25
+  eval_every: 100
+  save_every: 0
+  output_dir: runs/agentcoder_atomic_copy_gate/raam_hybrid1_copy_head/train
+eval:
+  eval_batches: 4
+  probe_lengths: [32, 64, 96]
+  long_context_lengths: [128]

@@ -47,6 +47,15 @@ class MTPConfig:
 
 
 @dataclass
+class CopyHeadConfig:
+    enabled: bool = False
+    d_copy: int | None = None
+    logit_scale: float = 4.0
+    temperature: float = 1.0
+    include_current_token: bool = True
+
+
+@dataclass
 class TrainConfig:
     seed: int = 17
     batch_size: int = 4
@@ -103,6 +112,7 @@ class ModelConfig:
     use_curriculum_mtp: bool = True
     compression: CompressionConfig = field(default_factory=CompressionConfig)
     mtp: MTPConfig = field(default_factory=MTPConfig)
+    copy_head: CopyHeadConfig = field(default_factory=CopyHeadConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
 
@@ -136,11 +146,13 @@ def load_config(path: str | Path) -> ModelConfig:
     raw = yaml.safe_load(path.read_text()) or {}
     compression = _update_dataclass(CompressionConfig(), raw.pop("compression", {}) or {})
     mtp = _update_dataclass(MTPConfig(), raw.pop("mtp", {}) or {})
+    copy_head = _update_dataclass(CopyHeadConfig(), raw.pop("copy_head", {}) or {})
     train = _update_dataclass(TrainConfig(), raw.pop("train", {}) or {})
     eval_config = _update_dataclass(EvalConfig(), raw.pop("eval", {}) or {})
     config = _update_dataclass(ModelConfig(), raw)
     config.compression = compression
     config.mtp = mtp
+    config.copy_head = copy_head
     config.train = train
     config.eval = eval_config
 

@@ -302,6 +302,28 @@ repeatability gate with that larger `--steps` value before scaling. Use the
 minimum per-seed pass rate as the gating signal. A strong mean pass rate is not
 enough if any seed still collapses to valid-looking but wrong slot values.
 
+If assistant-only masking still produces valid-looking wrong slots, test the
+feature-gated causal copy head before increasing data scale:
+
+```bash
+python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_copy_head_gate.yaml \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir runs/agentcoder_atomic_hybrid1_copy_head_seed029 \
+  --device auto \
+  --clean \
+  --no-fail
+```
+
+Run the matched dense-attention control with
+`configs/scratch/transformer_agentcoder_atomic_copy_head_gate.yaml` if the RAAM
+copy-head gate is ambiguous. Passing this gate would only clear the atomic
+current-context copy blocker; it would still need the corrected three-seed
+repeatability gate and then held-out/decoy slot-copy gates.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another

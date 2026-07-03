@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import torch
+
+from raam_lm.config import CopyHeadConfig, ModelConfig
+from raam_lm.copy_head import CausalCopyHead
+from raam_lm.registry import build_model
+
+
+def zero_copy_projection_weights(head: CausalCopyHead) -> None:
+    torch.nn.init.zeros_(head.query.weight)
+    torch.nn.init.zeros_(head.key.weight)
+
+
+def test_causal_copy_head_boosts_visible_context_tokens():
+    config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
+    head = CausalCopyHead(d_model=4, vocab_size=16, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 4, 4)
+    input_ids = torch.tensor([[3, 5, 5, 9]])
+    lm_logits = torch.zeros(1, 4, 16)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 2, 5] > out[0, 2, 9]
+    assert out[0, 2, 3] > out[0, 2, 9]
+    assert out[0, 2, 7] < out[0, 2, 5]
+
+
+def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
+    config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
+    head = CausalCopyHead(d_model=4, vocab_size=32, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 5, 4)
+    lm_logits = torch.zeros(1, 5, 32)
+    base_ids = torch.tensor([[2, 4, 6, 8, 10]])
+    changed_future_ids = torch.tensor([[2, 4, 6, 21, 22]])
+
+    base = head(hidden, base_ids, lm_logits)
+    changed = head(hidden, changed_future_ids, lm_logits)
+
+    torch.testing.assert_close(base[:, :3], changed[:, :3])
+
+
+def test_registry_models_enable_copy_head_from_config():
+    for model_name in ["raam", "transformer", "pure_mamba_like"]:
+        config = ModelConfig(
+            model_name=model_name,
+            vocab_size=32,
+            max_seq_len=16,
+            d_model=16,
+            n_layers=2,
+            n_heads=4,
+            n_kv_heads=4,
+            d_ff=32,
+        )
+        config.copy_head.enabled = True
+        config.compression.block_size = 4
+        config.compression.anchors_per_block = 1
+        config.compression.token_id_anchor_count = 1
+        config.compression.anchor_selection = "hybrid_token_id_learned"
+        if model_name != "raam":
+            config.compression.enabled = False
+            config.use_dynamic_hourglass_compression = False
+            config.use_anchor_preserved_local_global = False
+            config.use_attention_islands = False
+
+        model = build_model(config)
+        input_ids = torch.randint(0, config.vocab_size, (2, 12))
+        out = model(input_ids, labels=input_ids)
+
+        assert out["logits"].shape == (2, 12, config.vocab_size)
+        assert out["aux"]["copy_head_enabled"] is True

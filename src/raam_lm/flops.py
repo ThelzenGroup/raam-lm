@@ -49,5 +49,8 @@ def estimate_flops_per_token(config: ModelConfig) -> int:
     mtp = 0
     if config.mtp.enabled:
         mtp = int(sum(config.mtp.horizon_weights.values()) * head)
-    return int(body + head + mtp)
-
+    copy = 0
+    if config.copy_head.enabled:
+        d_copy = int(config.copy_head.d_copy or d)
+        copy = 2 * d * d_copy + 4 * seq * d_copy + seq
+    return int(body + head + mtp + copy)
