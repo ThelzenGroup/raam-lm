@@ -23,7 +23,7 @@ copy_head:
   temperature: 1.0
   include_current_token: true
   key_follow_strength: 10.0
-  key_follow_continuation_strength: 30.0
+  key_follow_continuation_strength: 0.0
   key_follow_recent_tokens: 24
   key_follow_value_offset: 3
   key_follow_value_span: 1
