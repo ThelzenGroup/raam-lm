@@ -190,6 +190,19 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
   --clean
 ```
 
+If disabling compression does not fix binding, test an exact-route RAAM variant
+that keeps compression but adds preserved anchors and exact-attention islands:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_anchor_attention \
+  --device auto \
+  --clean
+```
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.run_agentcoder_atomic_cardinality_sweep import (
     build_row,
@@ -83,3 +85,16 @@ def test_write_aggregate_writes_summary_json(tmp_path):
         "format": "agentcoder-atomic-cardinality-sweep-v1",
         "rows": [],
     }
+
+
+def test_raam_atomic_anchor_attention_config_enables_exact_route():
+    config_path = Path("configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml")
+    payload = yaml.safe_load(config_path.read_text())
+
+    assert payload["model_name"] == "raam"
+    assert payload["use_dynamic_hourglass_compression"] is True
+    assert payload["use_anchor_preserved_local_global"] is True
+    assert payload["use_attention_islands"] is True
+    assert payload["attention_island_layers"] == [1, 2]
+    assert payload["compression"]["enabled"] is True
+    assert payload["compression"]["anchors_per_block"] == 4
