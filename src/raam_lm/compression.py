@@ -118,8 +118,23 @@ class DynamicHourglassCompressor(nn.Module):
                     dtype=torch.float32,
                 ).round().to(torch.long)
                 local_idx = base_idx.view(1, 1, anchors).expand(bsz, n_blocks, anchors)
+            elif cfg.anchor_selection == "token_id_topk":
+                if input_ids is None:
+                    raise ValueError("token_id_topk anchor_selection requires input_ids")
+                if pad_len:
+                    input_ids_pad = F.pad(input_ids, (0, pad_len))
+                else:
+                    input_ids_pad = input_ids
+                token_id_blocks = input_ids_pad.view(bsz, n_blocks, block_size)
+                token_id_scores = token_id_blocks.to(anchor_scores.dtype).masked_fill(
+                    ~valid,
+                    dtype_mask_min(anchor_scores),
+                )
+                _, local_idx = torch.topk(token_id_scores, k=anchors, dim=-1)
             else:
-                raise ValueError("anchor_selection must be 'learned_topk' or 'uniform'")
+                raise ValueError(
+                    "anchor_selection must be 'learned_topk', 'uniform', or 'token_id_topk'"
+                )
             local_idx = torch.sort(local_idx, dim=-1).values
             local_idx = torch.minimum(local_idx, valid_counts - 1)
             anchor_valid_selected = torch.gather(valid, 2, local_idx)

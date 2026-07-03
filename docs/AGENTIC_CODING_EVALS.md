@@ -230,6 +230,22 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
   --clean
 ```
 
+If uniform anchors miss rare identifier/value tokens, test a deterministic
+content-aware selector that preserves the highest token IDs in each compression
+block. With the current generated atomic tokenizer, learned `copy_*` values get
+higher IDs than byte fallback tokens, so this is a cheap proxy for preserving
+code-like rare symbols:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_token_anchor_attention \
+  --device auto \
+  --clean
+```
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
