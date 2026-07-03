@@ -131,9 +131,39 @@ class DynamicHourglassCompressor(nn.Module):
                     dtype_mask_min(anchor_scores),
                 )
                 _, local_idx = torch.topk(token_id_scores, k=anchors, dim=-1)
+            elif cfg.anchor_selection == "hybrid_token_id_learned":
+                token_id_anchor_count = int(cfg.token_id_anchor_count)
+                if token_id_anchor_count < 0:
+                    raise ValueError("token_id_anchor_count must be >= 0")
+                if token_id_anchor_count > anchors:
+                    raise ValueError("token_id_anchor_count must be <= anchors_per_block")
+                if token_id_anchor_count == 0:
+                    _, local_idx = torch.topk(anchor_scores, k=anchors, dim=-1)
+                else:
+                    if input_ids is None:
+                        raise ValueError("hybrid_token_id_learned anchor_selection requires input_ids")
+                    if pad_len:
+                        input_ids_pad = F.pad(input_ids, (0, pad_len))
+                    else:
+                        input_ids_pad = input_ids
+                    token_id_blocks = input_ids_pad.view(bsz, n_blocks, block_size)
+                    token_id_scores = token_id_blocks.to(anchor_scores.dtype).masked_fill(
+                        ~valid,
+                        dtype_mask_min(anchor_scores),
+                    )
+                    _, token_idx = torch.topk(token_id_scores, k=token_id_anchor_count, dim=-1)
+                    learned_fill = anchors - token_id_anchor_count
+                    if learned_fill > 0:
+                        learned_scores = anchor_scores.clone()
+                        learned_scores.scatter_(2, token_idx, dtype_mask_min(anchor_scores))
+                        _, learned_idx = torch.topk(learned_scores, k=learned_fill, dim=-1)
+                        local_idx = torch.cat([token_idx, learned_idx], dim=-1)
+                    else:
+                        local_idx = token_idx
             else:
                 raise ValueError(
-                    "anchor_selection must be 'learned_topk', 'uniform', or 'token_id_topk'"
+                    "anchor_selection must be 'learned_topk', 'uniform', 'token_id_topk', "
+                    "or 'hybrid_token_id_learned'"
                 )
             local_idx = torch.sort(local_idx, dim=-1).values
             local_idx = torch.minimum(local_idx, valid_counts - 1)
@@ -198,6 +228,7 @@ class DynamicHourglassCompressor(nn.Module):
             "pooled_chunks_per_block": pooled,
             "anchors_per_block": anchors,
             "anchor_selection": cfg.anchor_selection,
+            "token_id_anchor_count": cfg.token_id_anchor_count,
             "anchor_indices": anchor_indices,
             "anchor_local_indices": local_idx,
             "token_to_block": token_to_block,

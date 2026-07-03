@@ -246,6 +246,20 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
   --clean
 ```
 
+If token-ID anchors preserve rare tokens but lose too much of the learned route,
+test a hybrid selector that reserves two anchors per block for high token IDs and
+fills the remaining two anchors with learned content scores:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_hybrid_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_hybrid_anchor_attention \
+  --device auto \
+  --clean
+```
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
