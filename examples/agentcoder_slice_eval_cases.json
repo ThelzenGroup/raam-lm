@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "name": "heldout_add_patch",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Be concise, exact, and test-oriented.\n\n<|repo_context|>\nfile: calc.py\n```python\ndef add(a, b):\n    return a - b\n```\n\n<|user|>\nFix add and name the test command.\n\n<|assistant|>\n",
+      "required_substrings": ["return a + b", "pytest"]
+    },
+    {
+      "name": "heldout_json_python_files",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Return strict JSON when asked.\n\n<|user|>\nReturn JSON for a shell command that lists Python files.\n\n<|assistant|>\n",
+      "required_substrings": ["*.py"],
+      "expected_json": {"cmd": "find . -type f -name '*.py'"}
+    },
+    {
+      "name": "heldout_risky_question",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Ask before risky changes.\n\n<|user|>\nBefore editing production payment code, ask one concise question.\n\n<|assistant|>\n",
+      "required_substrings": ["file", "test"]
+    },
+    {
+      "name": "heldout_debugging",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Explain debugging plainly.\n\n<|user|>\nA Python unit test is failing. Explain what to check before changing code.\n\n<|assistant|>\n",
+      "required_substrings": ["reproduce", "assertion"]
+    },
+    {
+      "name": "heldout_function_completion",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Complete Python functions safely.\n\n<|user|>\nComplete this function:\n```python\ndef is_even(n):\n```\n\n<|assistant|>\n",
+      "required_substrings": ["def is_even(n):", "return n % 2 == 0"]
+    },
+    {
+      "name": "heldout_test_command",
+      "prompt": "<|system|>\nYou are RAAM-AgentCoder. Recommend verification before commits.\n\n<|user|>\nYou edited a Python package. What command should run before committing?\n\n<|assistant|>\n",
+      "required_substrings": ["python -m pytest -q"]
+    }
+  ]
+}

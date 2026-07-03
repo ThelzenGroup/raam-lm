@@ -157,6 +157,34 @@ CASES = [
 ]
 
 
+def load_cases(path: str | None) -> list[dict[str, Any]]:
+    if path is None:
+        return CASES
+    payload = json.loads(Path(path).read_text())
+    if isinstance(payload, dict):
+        payload = payload.get("cases", [])
+    cases = []
+    for index, case in enumerate(payload):
+        if not isinstance(case, dict):
+            raise ValueError(f"case {index} must be an object")
+        if "prompt" not in case:
+            raise ValueError(f"case {index} is missing prompt")
+        required = case.get("required_substrings", [])
+        if not isinstance(required, list):
+            raise ValueError(f"case {index} required_substrings must be a list")
+        item = {
+            "name": str(case.get("name", f"case_{index:02d}")),
+            "prompt": str(case["prompt"]),
+            "required_substrings": [str(value) for value in required],
+        }
+        if "expected_json" in case:
+            item["expected_json"] = case["expected_json"]
+        cases.append(item)
+    if not cases:
+        raise ValueError("case file did not contain any cases")
+    return cases
+
+
 def first_json_object(text: str) -> Any | None:
     for start in [idx for idx, ch in enumerate(text) if ch == "{"]:
         for end in range(len(text), start, -1):
@@ -237,6 +265,7 @@ def main() -> None:
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--cases-json", default=None)
     parser.add_argument("--output", default="runs/agentcoder_overfit_eval.json")
     parser.add_argument("--max-new-tokens", type=int, default=160)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -254,9 +283,10 @@ def main() -> None:
     model = build_model(config).to(device).eval()
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint["model_state"])
+    cases = load_cases(args.cases_json)
 
     results = []
-    for case in CASES:
+    for case in cases:
         generated = generate(
             model,
             tokenizer,
@@ -290,6 +320,7 @@ def main() -> None:
             "top_k": args.top_k,
             "max_new_tokens": args.max_new_tokens,
             "min_pass_rate": args.min_pass_rate,
+            "cases_json": args.cases_json,
         },
         "pass_count": passed,
         "case_count": len(results),

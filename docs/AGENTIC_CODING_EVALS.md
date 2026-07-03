@@ -49,3 +49,22 @@ chat/software-engineering behaviors:
 If this gate fails, do not treat more tokens or bigger paid runs as the next
 fix. Inspect formatting, tokenizer coverage, prompt boundaries, EOS behavior,
 loss/objective settings, and generation settings first.
+
+## Small Non-Mirrored Slice Gate
+
+After the mirrored overfit gate passes, run the small slice gate:
+
+```bash
+python scripts/run_agentcoder_slice_gate.py \
+  --config configs/scratch/raam_agentcoder_slice_gate.yaml \
+  --data examples/agentcoder_slice_train.jsonl \
+  --cases-json examples/agentcoder_slice_eval_cases.json \
+  --output-dir runs/agentcoder_slice_gate \
+  --device auto \
+  --clean
+```
+
+This gate uses normal train/validation splitting and held-out eval prompts. It
+is still deliberately tiny, so failure is not a model-quality verdict. Its job
+is to catch whether the format learned in the mirrored gate survives a small
+non-mirrored slice before moving back to larger paid runs.
