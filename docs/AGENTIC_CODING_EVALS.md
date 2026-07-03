@@ -129,6 +129,45 @@ Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
 spending on a larger supervised or continuation run.
 
+## Copy-Only Slot Binding Gate
+
+If exact slot-copy failures appear, run the copy-only gate before another
+patch-formatting gate:
+
+```bash
+python scripts/run_agentcoder_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_copy_gate.yaml \
+  --output-dir runs/agentcoder_copy_gate_raam \
+  --device auto \
+  --clean
+```
+
+Run the tiny Transformer baseline on the same generated data shape with:
+
+```bash
+python scripts/run_agentcoder_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_copy_gate.yaml \
+  --output-dir runs/agentcoder_copy_gate_transformer \
+  --device auto \
+  --clean
+```
+
+This gate removes diff formatting, prose, and test-command wording. The model
+only has to emit short `key=value` lines copied from the current context:
+
+- `repo_lookup_copy`: `symbol=<symbol>` and `file=<file>`.
+- `patch_return_copy`: `file=<file>`, `helper=<helper>`, `return=<expr>`, and
+  `test=<path>`.
+- `patch_literal_copy`: `file=<file>`, `helper=<helper>`, `literal=<value>`,
+  and `test=<path>`.
+
+The default ladder emits `144` train records and `96` eval cases, split into
+`48` seen-slot cases and `48` held-out-slot cases. If a model cannot pass
+seen-slot cases here, the blocker is basic context copying/memorization rather
+than patch generation. If the Transformer baseline passes and RAAM fails, the
+RAAM compression path is suspect. If both fail, fix the objective, tokenizer,
+prompt/data shape, or training recipe before scaling.
+
 ## Slot-Copy Diagnostic Gate
 
 If the curated gate reaches the right behavior family but fails exact file,
