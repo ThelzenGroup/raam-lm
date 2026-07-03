@@ -1715,3 +1715,77 @@ After artifact pull, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## AgentCoder Repo-Lookup and Slot-Copy Follow-Up
+
+Ran three follow-up curated gates after patch-split v5 to test whether the tiny
+RAAM-AgentCoder setup can bind exact file/symbol slots from repo context instead
+of replaying a nearby training example.
+
+Code changes pushed:
+
+- `3ed2b1f Add repo lookup distractor curriculum`
+- `f01f533 Tighten AgentCoder slot diagnostics`
+- `04de904 Fix curated repo lookup prompt contract`
+- `17975e3 Add explicit slot-copy AgentCoder drills`
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/eval_overfit_sanity.py scripts/compare_agentcoder_gates.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_slotcopy_v8/train.jsonl --cases-output work/curated_sft_slotcopy_v8/cases.json --manifest-output work/curated_sft_slotcopy_v8/manifest.json
+git diff --check
+```
+
+Result: syntax and generator checks passed. The v8 generator emitted `96`
+records, `10` eval cases, balanced `8` records per behavior, and format
+`agentcoder-curated-sft-v8`. Local focused pytest still cannot collect on this
+host because local Python lacks `torch`; the same focused test passed on Vast.
+
+Remote RTX 5090 validation command shape for each run:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/<RUN_ID> \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+All three follow-up runs completed on the RTX 5090 and full remote pytest passed
+with `28 passed` each time.
+
+| Run | Format focus | Exact pass | Behavior accuracy | Final val loss | Final tokens/sec | Failed cases |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `agentcoder_curated_gate_lookup_20260703T043243Z` | repo distractors | `8 / 10` | `9 / 10` | `1.0250842720270157` | `66937.11065241446` | add patch became test-command; repo lookup copied `build_parser` / `title_tools.py` |
+| `agentcoder_curated_gate_v7_20260703T044053Z` | safer title/normalize drills | `8 / 10` | `10 / 10` | `0.9177761673927307` | `68737.39410439291` | add patch copied `arithmetic.py`; repo lookup copied `normalize_user` / `validators.py` |
+| `agentcoder_curated_gate_v8_20260703T044746Z` | explicit slot-copy prompts | `8 / 10` | `10 / 10` | `0.8717429041862488` | `68172.28443860989` | add patch copied `mathlib.py`; repo lookup copied `save_user` / `slugs.py` |
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_lookup_20260703T043243Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_v7_20260703T044053Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_v8_20260703T044746Z`
+
+Comparison report:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_slotcopy_20260703T044746Z.md`.
+
+Interpretation: patch-split v5 remains the best exact-pass curated gate at
+`9 / 10`. v7 and v8 improved behavior accuracy to `10 / 10` and lowered
+validation loss, but exact pass rate stayed at `8 / 10` because the model still
+replays stale file/symbol slots. This is no longer a behavior-family problem; it
+is a context slot-binding problem. Do not launch a larger paid chat/coding run
+as if this is solved. The next useful step is a bigger programmatic slot-copy
+curriculum and eval set with many repo-context file/function/literal
+combinations, plus a stronger held-out report, before returning to Stage 5
+continuation.
+
+After artifact pulls, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
