@@ -120,3 +120,8 @@ while shifting mistakes between behavior families.
 By default, the comparison script recomputes behavior labels from completions
 with the current heuristic. Pass `--prefer-stored-behavior` when you need to
 replay the labels saved inside the original artifact exactly.
+
+When exact pass rate stalls but behavior accuracy improves, treat the remaining
+errors as slot-copying failures rather than broad behavior failures. Typical
+examples are choosing the correct repo-lookup style but naming the wrong file,
+or producing the right kind of patch for the wrong helper/value pair.

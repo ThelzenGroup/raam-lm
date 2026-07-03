@@ -1090,6 +1090,77 @@ between train and held-out cases unless they are intentionally testing lookup,
 then add explicit negative examples for "debugging is not code completion" and
 "repo-context answers must cite the file containing the implementation."
 
+## AgentCoder Collision-Aware Gate Run
+
+Added collision-aware changes to the curated generator:
+
+- debugging supervision now explicitly says to explain the debugging process
+  without writing code
+- repo-context lookup supervision now says to cite the file that defines the
+  function, not the file that imports it
+- the held-out repo lookup case now uses `normalize_title` in `titles.py`, avoiding
+  the previous overlap with training examples around `add`, `calc.py`, and
+  `config.py`
+- the curated manifest format is now `agentcoder-curated-sft-v3`
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/eval_overfit_sanity.py scripts/compare_agentcoder_gates.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_collision_v3/train.jsonl --cases-output work/curated_sft_collision_v3/cases.json --manifest-output work/curated_sft_collision_v3/manifest.json
+python3 scripts/train_tokenizer.py work/curated_sft_collision_v3/train.jsonl --output work/curated_sft_collision_v3/tokenizer.json --vocab-size 1536
+git diff --check
+```
+
+Remote validation and gate:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_collision_20260703T035241Z \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote test results:
+
+- targeted generator test: `1 passed, 7 deselected in 1.46s`
+- full suite: `27 passed in 32.18s`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_collision_20260703T035241Z`.
+
+Generated comparison report:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_collision_20260703T035241Z.md`.
+
+| Metric | Curated v1 | Command-disambiguation v2 | Balanced v3 | Collision-aware v3 |
+| --- | ---: | ---: | ---: | ---: |
+| Held-out exact pass rate | 8 / 10 | 7 / 10 | 8 / 10 | 8 / 10 |
+| Behavior accuracy | 9 / 10 | 8 / 10 | 9 / 10 | 10 / 10 |
+| Train records | 60 | 73 | 96 | 96 |
+| Train tokens | 7679 | 8695 | 10567 | 11069 |
+| Validation tokens | 1543 | 2049 | 2804 | 2856 |
+| Final validation loss | 1.5991248786449432 | 0.7426003813743591 | 0.9329699128866196 | 0.9868301898241043 |
+
+Collision-aware v3 improved the diagnostic signal: the model now chose the
+correct behavior family for every held-out case. Exact pass rate did not improve
+because the remaining misses are slot-copying/detail errors:
+
+- `curated_repo_lookup`: used the right repo-lookup behavior, but answered
+  `slugify` / `names.py` instead of copying `normalize_title` / `titles.py` from
+  the provided context.
+- `curated_flag_patch`: used the right boolean-flag patch behavior, but patched
+  the remembered `cache_enabled(... == "on")` example instead of the held-out
+  `is_enabled(... == "true")` file/value pair.
+
+Interpretation: the next gate should target exact slot binding, not broader
+behavior classification. Add examples that force copying the requested symbol,
+file path, and target literal from the prompt/context, plus eval checks that
+distinguish "right behavior, wrong slot" from "wrong behavior."
+
 Results: targeted mirror-val test passed, script syntax passed, and the full
 test suite passed with `22 passed in 32.73s`.
 
