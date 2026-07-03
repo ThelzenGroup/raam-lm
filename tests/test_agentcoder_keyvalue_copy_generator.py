@@ -13,6 +13,7 @@ from scripts.make_agentcoder_keyvalue_copy_sft import (
     KEYS,
     TARGET_FIELDS,
     TRAIN_RECORDS,
+    TRAIN_VARIANTS_PER_ROW,
     VALUE_FORMATS,
     build_eval_cases,
     build_train_records,
@@ -28,9 +29,11 @@ def test_keyvalue_generator_builds_ladder_with_distractors_and_formats():
     cases = build_eval_cases(seed=17, eval_mode="ladder", train_records=TRAIN_RECORDS, eval_cases=EVAL_CASES)
 
     assert len(records) == TRAIN_RECORDS
+    assert TRAIN_VARIANTS_PER_ROW == 1
     assert len(cases) == EVAL_CASES * 2
     assert {row["slot_family"] for row in records} == {"keyvalue_repo_copy"}
     assert {row["slot_family"] for row in cases} == {"keyvalue_repo_copy"}
+    assert {row["train_variant_index"] for row in records} == {0}
     assert {row["eval_tier"] for row in cases} == {"seen_slot", "heldout_slot"}
     assert all(len(row["expected_slots"]) == TARGET_FIELDS for row in records)
     assert all(len(row["expected_slots"]) == TARGET_FIELDS for row in cases)
@@ -57,6 +60,25 @@ def test_keyvalue_seen_and_heldout_slots_are_distinct():
     assert seen_slots
     assert seen_slots.issubset(train_slots)
     assert heldout_slots.isdisjoint(train_slots)
+
+
+def test_keyvalue_train_variants_randomize_layouts_per_source_row():
+    records = build_train_records(seed=17, train_records=4, train_variants_per_row=4)
+    first_row_records = [row for row in records if row["source_row_index"] == 0]
+    expected_slot_sets = {
+        tuple(row["expected_slots"].items())
+        for row in first_row_records
+    }
+    context_orders = {
+        tuple(row["repo_context"].splitlines())
+        for row in first_row_records
+    }
+
+    assert len(records) == 16
+    assert len(first_row_records) == 4
+    assert {row["train_variant_index"] for row in first_row_records} == {0, 1, 2, 3}
+    assert len(expected_slot_sets) > 1
+    assert len(context_orders) > 1
 
 
 def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():
@@ -124,6 +146,8 @@ def test_keyvalue_cli_writes_manifest_and_cases(tmp_path):
             "coverage_ladder",
             "--train-records",
             "12",
+            "--train-variants-per-row",
+            "3",
             "--eval-cases",
             "8",
         ],
@@ -134,7 +158,11 @@ def test_keyvalue_cli_writes_manifest_and_cases(tmp_path):
     payload = json.loads(manifest.read_text())
     assert payload["format"] == "agentcoder-keyvalue-copy-sft-v1"
     assert payload["eval_mode"] == "coverage_ladder"
-    assert payload["train_records"] == 12
+    assert payload["base_train_rows"] == 12
+    assert payload["train_variants_per_row"] == 3
+    assert payload["train_records"] == 36
+    assert payload["train_source_row_count"] == 12
+    assert payload["train_variant_counts"] == {"0": 12, "1": 12, "2": 12}
     assert payload["eval_cases"] == 24
     assert payload["target_fields"] == TARGET_FIELDS
     assert payload["distractor_fields"] == DISTRACTOR_FIELDS

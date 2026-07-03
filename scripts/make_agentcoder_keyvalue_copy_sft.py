@@ -12,6 +12,7 @@ from typing import Any
 SYSTEM = "You are RAAM-AgentCoder, a precise repo-context key-value copying assistant."
 DEFAULT_SEED = 17
 TRAIN_RECORDS = 96
+TRAIN_VARIANTS_PER_ROW = 1
 EVAL_CASES = 64
 TARGET_FIELDS = 3
 DISTRACTOR_FIELDS = 4
@@ -112,12 +113,19 @@ def forbidden_substrings(distractors: list[dict[str, str]]) -> list[str]:
     return [f"{field['key']}={field['value']}" for field in distractors]
 
 
-def record(row: dict[str, Any], seed: int) -> dict[str, Any]:
-    rng = random.Random(seed + int(row["index"]) * 17)
+def variant_seed(seed: int, row_index: int, variant_index: int = 0) -> int:
+    return seed + row_index * 17 + variant_index * 1009
+
+
+def record(row: dict[str, Any], seed: int, variant_index: int = 0) -> dict[str, Any]:
+    row_index = int(row["index"])
+    rng = random.Random(variant_seed(seed, row_index, variant_index))
     targets, distractors = choose_fields(row, rng)
     return {
         "behavior": "copy_slot_values",
         "slot_family": "keyvalue_repo_copy",
+        "source_row_index": row_index,
+        "train_variant_index": variant_index,
         "expected_slots": expected_slots(targets),
         "system": f"{SYSTEM} Return only exact key=value lines.",
         "repo_context": repo_context(targets, distractors, rng),
@@ -143,10 +151,21 @@ def case(name: str, row: dict[str, Any], eval_tier: str, seed: int) -> dict[str,
     }
 
 
-def build_train_records(seed: int = DEFAULT_SEED, train_records: int = TRAIN_RECORDS) -> list[dict[str, Any]]:
+def build_train_records(
+    seed: int = DEFAULT_SEED,
+    train_records: int = TRAIN_RECORDS,
+    train_variants_per_row: int = TRAIN_VARIANTS_PER_ROW,
+) -> list[dict[str, Any]]:
     if train_records < 1:
         raise ValueError("train_records must be positive")
-    return [record(spec(index), seed=seed) for index in range(train_records)]
+    if train_variants_per_row < 1:
+        raise ValueError("train_variants_per_row must be positive")
+    records: list[dict[str, Any]] = []
+    for index in range(train_records):
+        row = spec(index)
+        for variant_index in range(train_variants_per_row):
+            records.append(record(row, seed=seed, variant_index=variant_index))
+    return records
 
 
 def build_eval_cases(
@@ -208,10 +227,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--eval-mode", choices=EVAL_MODES, default="ladder")
     parser.add_argument("--train-records", type=int, default=TRAIN_RECORDS)
+    parser.add_argument("--train-variants-per-row", type=int, default=TRAIN_VARIANTS_PER_ROW)
     parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
     args = parser.parse_args()
 
-    train_records = build_train_records(seed=args.seed, train_records=args.train_records)
+    train_records = build_train_records(
+        seed=args.seed,
+        train_records=args.train_records,
+        train_variants_per_row=args.train_variants_per_row,
+    )
     eval_cases = build_eval_cases(
         seed=args.seed,
         eval_mode=args.eval_mode,
@@ -227,6 +251,8 @@ def main() -> None:
 
     behavior_counts = Counter(str(row["behavior"]) for row in train_records)
     train_family_counts = Counter(str(row["slot_family"]) for row in train_records)
+    train_variant_counts = Counter(str(row.get("train_variant_index", 0)) for row in train_records)
+    train_source_row_counts = Counter(str(row.get("source_row_index", "")) for row in train_records)
     eval_family_counts = Counter(str(row["slot_family"]) for row in eval_cases)
     eval_tier_counts = Counter(str(row["eval_tier"]) for row in eval_cases)
     key_counts = Counter(key for row in eval_cases for key in row["target_keys"])
@@ -241,6 +267,8 @@ def main() -> None:
         "train_records": len(train_records),
         "eval_cases": len(eval_cases),
         "requested_train_records": args.train_records,
+        "base_train_rows": args.train_records,
+        "train_variants_per_row": args.train_variants_per_row,
         "requested_eval_cases": args.eval_cases,
         "target_fields": TARGET_FIELDS,
         "distractor_fields": DISTRACTOR_FIELDS,
@@ -248,6 +276,8 @@ def main() -> None:
         "value_formats": VALUE_FORMATS,
         "behavior_counts": dict(sorted(behavior_counts.items())),
         "train_slot_family_counts": dict(sorted(train_family_counts.items())),
+        "train_variant_counts": dict(sorted(train_variant_counts.items())),
+        "train_source_row_count": len(train_source_row_counts),
         "eval_slot_family_counts": dict(sorted(eval_family_counts.items())),
         "eval_tier_counts": dict(sorted(eval_tier_counts.items())),
         "eval_target_key_counts": dict(sorted(key_counts.items())),

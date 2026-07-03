@@ -89,6 +89,7 @@ def main() -> None:
         default="ladder",
     )
     parser.add_argument("--train-records", type=int, default=96)
+    parser.add_argument("--train-variants-per-row", type=int, default=1)
     parser.add_argument("--eval-cases", type=int, default=64)
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--min-pass-rate", type=float, default=1.0)
@@ -130,6 +131,8 @@ def main() -> None:
             args.eval_mode,
             "--train-records",
             str(args.train_records),
+            "--train-variants-per-row",
+            str(args.train_variants_per_row),
             "--eval-cases",
             str(args.eval_cases),
         ]
@@ -206,6 +209,8 @@ def main() -> None:
         "behavior_labeled_cases": eval_payload.get("behavior_labeled_cases"),
         "last_train_row": read_last_train_row(train_dir / "train_log.jsonl"),
         "train_records": data_payload["train_records"],
+        "base_train_rows": data_payload.get("base_train_rows", args.train_records),
+        "train_variants_per_row": data_payload.get("train_variants_per_row", args.train_variants_per_row),
         "eval_cases": data_payload["eval_cases"],
         "train_tokens": packed_manifest["train_tokens"],
         "val_tokens": packed_manifest["val_tokens"],
