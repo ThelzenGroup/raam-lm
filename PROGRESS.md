@@ -4616,3 +4616,167 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## 2026-07-03 - Request-Key Stop-EOS Value Copy Gate
+
+The current broad chat checkpoint is still
+`stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z`, and it is still not
+a useful assistant. This step intentionally did not continue broad SFT. It
+targeted the smallest reproducible failure left in the exact repo-context
+retrieval path: after the request-key copy route found the correct held-out
+value prefix, generation often continued into repeated suffix tokens instead of
+stopping cleanly.
+
+Code change committed and pushed first:
+
+- commit `a66ab18` - `Emit EOS after request-key value copies`
+- added `CopyHeadConfig.request_key_follow_stop_strength`
+- added `CopyHeadConfig.request_key_follow_stop_emit_token_id`
+- extended the request-key follow route to return an EOS-emission distribution
+  after a matched generated value prefix reaches the source value stop token
+- enabled the route in the matched RAAM and Transformer request-value configs
+- added a focused copy-head regression test for EOS at value stop
+- updated FLOP accounting for the request-key follow/stop route
+
+Local validation for the code change:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/copy_head.py tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m py_compile src/raam_lm/flops.py
+python3 scripts/estimate_flops.py --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml
+python3 scripts/estimate_flops.py --config configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused key/value generator tests passed: `13 passed in 0.10s`
+- RAAM local FLOPs estimate: `2944384` FLOPs/token, config hash
+  `608a842b9c759728`
+- Transformer local FLOPs estimate: `3537152` FLOPs/token, config hash
+  `d490e0c1d3c9c1fe`
+- `git diff --check` passed
+
+Rechecked locally after the Vast run:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/copy_head.py src/raam_lm/flops.py tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+```
+
+Result: `13 passed in 0.12s`.
+
+Vast RTX 5090 run:
+
+- instance: `43634442`
+- run ID: `agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z`
+- remote run root:
+  `/root/raam-lm/runs/agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z`
+- local artifact path:
+  `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z`
+
+Remote command:
+
+```bash
+cd /root/raam-lm
+git pull --ff-only
+RUN_ID=agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z
+RUN_ROOT=/root/raam-lm/runs/$RUN_ID
+mkdir -p "$RUN_ROOT/logs" work
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_pipeline.py -k "request_key or keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards" | tee "$RUN_ROOT/logs/tests.log"
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml --output-dir "$RUN_ROOT/raam" --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 --max-new-tokens 48 --clean --no-fail | tee "$RUN_ROOT/logs/raam.log"
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py --config configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml --output-dir "$RUN_ROOT/transformer" --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 --max-new-tokens 48 --clean --no-fail | tee "$RUN_ROOT/logs/transformer.log"
+```
+
+Remote focused tests passed: `38 passed, 8 deselected, 1 warning in 5.11s`.
+
+Comparable previous prefix-route artifact:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_request_value_prefix_onefield_compare_20260703T124955Z`.
+
+| Model | Run | Exact Pass | Seen | Covered Value | Held-Out | Val Loss | Tokens/sec | FLOPs/token |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM | previous prefix route | 72 / 96 | 32 / 32 | 32 / 32 | 8 / 32 | 0.682547 | 27080.3 | 2639104 |
+| Transformer | previous prefix route | 91 / 96 | 31 / 32 | 32 / 32 | 28 / 32 | 0.709046 | 26933.3 | 3231872 |
+| RAAM | stop-EOS route | 93 / 96 | 32 / 32 | 32 / 32 | 29 / 32 | 1.870651 | 25023.2 | 2794880 |
+| Transformer | stop-EOS route | 93 / 96 | 32 / 32 | 32 / 32 | 29 / 32 | 2.003771 | 21322.4 | 3387648 |
+
+Both stop-EOS runs failed the same three held-out cases:
+
+- `keyvalue_heldout_021`
+- `keyvalue_heldout_027`
+- `keyvalue_heldout_028`
+
+Artifact pull:
+
+```bash
+RUN_ID=agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z
+REMOTE=/root/raam-lm/runs/$RUN_ID
+LOCAL=/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_$RUN_ID
+mkdir -p "$LOCAL"
+ssh -o StrictHostKeyChecking=no -p 34442 root@ssh1.vast.ai "cd '$REMOTE' && tar -czf - \
+  logs \
+  raam/summary.json raam/keyvalue_eval.json raam/generated/keyvalue_eval_cases.json raam/generated/keyvalue_manifest.json raam/packed/manifest.json raam/tokenizer.json raam/train/config.yaml raam/train/manifest.json raam/train/train_log.jsonl \
+  transformer/summary.json transformer/keyvalue_eval.json transformer/generated/keyvalue_eval_cases.json transformer/generated/keyvalue_manifest.json transformer/packed/manifest.json transformer/tokenizer.json transformer/train/config.yaml transformer/train/manifest.json transformer/train/train_log.jsonl" | tar -xzf - -C "$LOCAL"
+find "$LOCAL" -type f \( -name '*.pt' -o -name '*.safetensors' -o -name '*.bin' -o -name '*train.jsonl' \) -print
+```
+
+Result:
+
+- local artifact size: `4.6M`
+- no checkpoint files pulled
+- no packed token bins pulled
+- no generated training JSONL pulled
+- pulled logs, summaries, eval cases/results, manifests, tokenizer/config
+  copies, and train logs
+
+Remote cleanup:
+
+```bash
+ssh -o StrictHostKeyChecking=no -p 34442 root@ssh1.vast.ai 'RUN=/root/raam-lm/runs/agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z; find "$RUN" -type f \( -name "*.pt" -o -name "*.safetensors" \) -print -delete; echo REMAINING; find "$RUN" -type f \( -name "*.pt" -o -name "*.safetensors" \) -print'
+```
+
+Deleted:
+
+- `/root/raam-lm/runs/agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z/raam/train/checkpoints/last.pt`
+- `/root/raam-lm/runs/agentcoder_request_value_stop_eos_onefield_compare_20260703T143000Z/transformer/train/checkpoints/last.pt`
+
+The final `REMAINING` scan printed no checkpoint/model files.
+
+Vast stop verification:
+
+```bash
+vastai stop instance 43634442
+ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -p 34442 root@ssh1.vast.ai 'echo still_up'
+vastai show instances-v1 --raw
+```
+
+Results:
+
+- stop command returned `stopping instance 43634442.`
+- SSH check returned `Connection refused`
+- sanitized final status fields:
+
+```text
+43627905 actual_status=exited cur_state=stopped intended_status=stopped next_state=stopped
+43634442 actual_status=exited cur_state=stopped intended_status=stopped next_state=stopped
+```
+
+Interpretation:
+
+- This is a real, evidence-backed improvement over the current RAAM
+  request-value copy failure: exact pass improved from `72 / 96` to `93 / 96`,
+  and held-out exact retrieval improved from `8 / 32` to `29 / 32`.
+- The previous suffix-loop failure was mostly a termination/control problem
+  after the correct value prefix was selected.
+- The improvement is not RAAM-specific because the matched Transformer also
+  reaches `93 / 96` and fails the same held-out cases.
+- RAAM is still favorable on this tiny gate's efficiency metrics versus the
+  matched Transformer: lower validation loss, higher tokens/sec, fewer
+  estimated FLOPs/token, and similar exact pass.
+- This does not make the Stage 5 85M chat checkpoint a useful assistant. It
+  clears one exact-output repo-context copying blocker. The next useful gate is
+  to extend from one requested value to ordered multi-field outputs and then
+  back to patch-format validity, while treating exact pass rate rather than
+  validation loss as the primary signal.

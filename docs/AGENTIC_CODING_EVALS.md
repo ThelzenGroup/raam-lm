@@ -324,6 +324,31 @@ copy-head gate is ambiguous. Passing this gate would only clear the atomic
 current-context copy blocker; it would still need the corrected three-seed
 repeatability gate and then held-out/decoy slot-copy gates.
 
+## Request-Key Value Copy Gate
+
+After atomic binding passes, use the request-key value gate to test exact
+retrieval from a small repo-style key/value context:
+
+```bash
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir runs/agentcoder_keyvalue_request_value_gate_raam \
+  --completion-mode value_only \
+  --eval-mode coverage_ladder \
+  --target-fields 1 \
+  --device auto \
+  --clean \
+  --no-fail
+```
+
+Run the matched dense-attention control with
+`configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml`. The
+gate asks for the value of a requested key and evaluates seen, covered-value,
+and held-out slots. The request-key copy head may boost EOS after a matched
+source value stop token with `request_key_follow_stop_strength` and
+`request_key_follow_stop_emit_token_id`; this is a termination control for
+exact-output copy tasks, not evidence of general chat or patch-writing quality.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
