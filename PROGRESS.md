@@ -1881,6 +1881,168 @@ step is a stronger binding-carry diagnostic: after emitting the copied symbol,
 track or reselect the source row position and constrain the following copied
 slot value to come from that same row, then re-run the same `64`-binding gate.
 
+## Binding-Carry and Key-Follow Copy-Head Gates
+
+Added two opt-in diagnostics after the pair-consistency bias failed to clear the
+seed-29 gate:
+
+- `binding_carry_*`: a rare-token row-tail carry route that boosts source tokens
+  following a recently emitted rare anchor
+- `key_follow_*`: a slot-key route that, after an answer prefix such as
+  `file=`, copies the value token at a fixed offset after the same key in a
+  bounded source region
+
+Added:
+
+- `configs/scratch/raam_agentcoder_atomic_hybrid1_binding_carry_copy_head_gate.yaml`
+- `configs/scratch/raam_agentcoder_atomic_hybrid1_key_follow_copy_head_gate.yaml`
+- focused copy-head tests for binding-carry, key-follow, and causal
+  future-token perturbation
+- config coverage in `tests/test_agentcoder_atomic_cardinality_sweep.py`
+- FLOP accounting for the extra diagnostic routes
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/copy_head.py src/raam_lm/config.py src/raam_lm/flops.py tests/test_copy_head.py tests/test_agentcoder_atomic_cardinality_sweep.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 scripts/estimate_flops.py --config configs/scratch/raam_agentcoder_atomic_hybrid1_binding_carry_copy_head_gate.yaml
+python3 scripts/estimate_flops.py --config configs/scratch/raam_agentcoder_atomic_hybrid1_key_follow_copy_head_gate.yaml
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused non-Torch local tests passed after binding-carry: `34 passed in 0.13s`
+- focused non-Torch local tests passed after key-follow: `35 passed in 0.13s`
+- binding-carry config FLOPs/token estimate: `2259168`
+- key-follow config FLOPs/token estimate: `2107296`
+- `git diff --check` passed
+- local `tests/test_copy_head.py` remains blocked by missing local `torch`; the
+  same tests were run on Vast below
+
+Vast RTX 5090 binding-carry gate:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_binding_carry_copy_head_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_binding_carry_copy_head_seed029_steps2400_20260703T094155Z/raam_seed029_binding_carry_copy_head \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --clean \
+  --no-fail
+```
+
+Binding-carry results:
+
+- copy-head and masking tests: `12 passed, 8 deselected`
+- atomic config/generator tests: `34 passed in 0.16s`
+- exact pass: `52 / 64`
+- behavior accuracy: `64 / 64`
+- final validation next-token loss: `0.214981`
+- tokens/sec: `15176.7`
+- estimated FLOPs/token: `2111456`
+
+Representative binding-carry failures:
+
+- `atomic_mirror_002` completed `copy_symbol_021` / `copy_file_021.py`
+- `atomic_mirror_009` completed `copy_symbol_063` / `copy_file_063.py`
+- `atomic_mirror_061` completed `copy_symbol_012` / `copy_file_012.py`
+
+Interpretation: direct rare-token binding carry is a negative result. It lowers
+validation loss but worsens exact binding by encouraging wrong but internally
+consistent pairs. Keep it as an opt-in diagnostic only; do not use it for the
+current AgentCoder training path.
+
+Copy-logit-scale diagnostic on the prior best copy-head checkpoint:
+
+```bash
+/venv/main/bin/python scripts/eval_overfit_sanity.py \
+  --config <copy-head config with logit_scale swept over 4,5,6,8,10,12> \
+  --tokenizer /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/tokenizer.json \
+  --checkpoint /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/train/checkpoints/last.pt \
+  --device cuda \
+  --cases-json /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/generated/atomic_eval_cases.json \
+  --max-new-tokens 24 \
+  --no-fail
+```
+
+Results:
+
+- scales `4`, `5`, `6`, `8`, and `10`: still `63 / 64`, same
+  `atomic_mirror_009` file failure, completing `copy_file_058.py`
+- scale `12`: still `63 / 64`, but over-boosted into
+  `file=copy_symbol_009.py`
+
+Interpretation: the remaining copy-head failure is source selection, not just
+copy-logit strength.
+
+Vast RTX 5090 key-follow eval-only diagnostic:
+
+```bash
+/venv/main/bin/python scripts/eval_overfit_sanity.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_key_follow_copy_head_gate.yaml \
+  --tokenizer /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/tokenizer.json \
+  --checkpoint /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/train/checkpoints/last.pt \
+  --device cuda \
+  --cases-json /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head/generated/atomic_eval_cases.json \
+  --max-new-tokens 24 \
+  --no-fail
+```
+
+Result: `64 / 64` exact pass, behavior accuracy `64 / 64`.
+
+Vast RTX 5090 key-follow full train/eval gate:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_key_follow_copy_head_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_key_follow_copy_head_seed029_steps2400_20260703T095120Z/raam_seed029_key_follow_copy_head \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --clean \
+  --no-fail
+```
+
+Key-follow results:
+
+- copy-head and masking tests: `14 passed, 8 deselected`
+- atomic config/generator tests: `35 passed in 0.15s`
+- exact pass: `64 / 64`
+- behavior accuracy: `64 / 64`
+- final validation next-token loss: `0.227288`
+- tokens/sec: `21475.8`
+- estimated FLOPs/token: `1959584`
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_binding_carry_copy_head_seed029_steps2400_20260703T094155Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_copy_head_logit_scale_eval_20260703T094621Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_key_follow_eval_only_20260703T095041Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_key_follow_copy_head_seed029_steps2400_20260703T095120Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: key-follow is the first efficient RAAM route to clear the
+fragile seed-29 `64`-binding mirror gate without preserving every token as an
+anchor. It is still a narrow structured-copy diagnostic, not evidence that the
+model is ready for broad chat/coding training. The next useful step is to
+generalize the slot-copy gate beyond the synthetic `symbol`/`file` pair:
+multiple key names, multiple value offsets/formats, repo-context distractors,
+held-out keys/values, and then compare RAAM key-follow against the Transformer
+copy-head baseline under the same gate.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
