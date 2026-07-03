@@ -35,12 +35,17 @@ def summarize_slot_families(eval_payload: dict[str, Any]) -> dict[str, dict[str,
         slot_errors = sum(1 for row in rows if row.get("slot_error"))
         behavior_labeled = [row for row in rows if row.get("behavior_correct") is not None]
         behavior_correct = sum(1 for row in behavior_labeled if row.get("behavior_correct"))
+        key_sequence_labeled = [row for row in rows if row.get("key_sequence_correct") is not None]
+        key_sequence_correct = sum(1 for row in key_sequence_labeled if row.get("key_sequence_correct"))
         summary[family] = {
             "case_count": len(rows),
             "pass_count": passed,
             "pass_rate": passed / len(rows) if rows else None,
             "slot_error_count": slot_errors,
             "behavior_accuracy": behavior_correct / len(behavior_labeled) if behavior_labeled else None,
+            "key_sequence_accuracy": (
+                key_sequence_correct / len(key_sequence_labeled) if key_sequence_labeled else None
+            ),
             "failed_cases": [row.get("name") for row in rows if not row.get("passed")],
         }
     return summary
@@ -61,12 +66,17 @@ def summarize_ladder(eval_payload: dict[str, Any]) -> dict[str, Any]:
             slot_errors = sum(1 for row in rows if row.get("slot_error"))
             behavior_labeled = [row for row in rows if row.get("behavior_correct") is not None]
             behavior_correct = sum(1 for row in behavior_labeled if row.get("behavior_correct"))
+            key_sequence_labeled = [row for row in rows if row.get("key_sequence_correct") is not None]
+            key_sequence_correct = sum(1 for row in key_sequence_labeled if row.get("key_sequence_correct"))
             summary[family][tier] = {
                 "case_count": len(rows),
                 "pass_count": passed,
                 "pass_rate": passed / len(rows) if rows else None,
                 "slot_error_count": slot_errors,
                 "behavior_accuracy": behavior_correct / len(behavior_labeled) if behavior_labeled else None,
+                "key_sequence_accuracy": (
+                    key_sequence_correct / len(key_sequence_labeled) if key_sequence_labeled else None
+                ),
                 "failed_cases": [row.get("name") for row in rows if not row.get("passed")],
             }
     return summary

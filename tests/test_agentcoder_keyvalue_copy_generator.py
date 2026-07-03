@@ -184,6 +184,7 @@ def test_keyvalue_summaries_count_tiers():
                 "passed": True,
                 "slot_error": False,
                 "behavior_correct": True,
+                "key_sequence_correct": True,
                 "name": "seen",
             },
             {
@@ -192,6 +193,7 @@ def test_keyvalue_summaries_count_tiers():
                 "passed": False,
                 "slot_error": True,
                 "behavior_correct": True,
+                "key_sequence_correct": False,
                 "name": "heldout",
             },
         ]
@@ -202,8 +204,11 @@ def test_keyvalue_summaries_count_tiers():
 
     assert family["keyvalue_repo_copy"]["pass_count"] == 1
     assert family["keyvalue_repo_copy"]["slot_error_count"] == 1
+    assert family["keyvalue_repo_copy"]["key_sequence_accuracy"] == 0.5
     assert ladder["keyvalue_repo_copy"]["seen_slot"]["pass_rate"] == 1.0
+    assert ladder["keyvalue_repo_copy"]["seen_slot"]["key_sequence_accuracy"] == 1.0
     assert ladder["keyvalue_repo_copy"]["heldout_slot"]["failed_cases"] == ["heldout"]
+    assert ladder["keyvalue_repo_copy"]["heldout_slot"]["key_sequence_accuracy"] == 0.0
 
 
 def test_keyvalue_key_follow_configs_enable_same_route():

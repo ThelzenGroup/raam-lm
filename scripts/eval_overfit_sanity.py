@@ -195,6 +195,11 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
             item["eval_tier"] = str(case["eval_tier"])
         if "expected_slots" in case:
             item["expected_slots"] = case["expected_slots"]
+        if "target_keys" in case:
+            target_keys = case["target_keys"]
+            if not isinstance(target_keys, list):
+                raise ValueError(f"case {index} target_keys must be a list")
+            item["target_keys"] = [str(value) for value in target_keys]
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
         if "expected_behavior" in case:
@@ -299,6 +304,38 @@ def build_behavior_confusion(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def generated_key_sequence(completion: str) -> list[str]:
+    keys: list[str] = []
+    for raw_line in completion.replace("<eos>", "\n").splitlines():
+        line = raw_line.strip()
+        if not line or "=" not in line:
+            continue
+        key, _ = line.split("=", 1)
+        key = key.strip()
+        if key:
+            keys.append(key)
+    return keys
+
+
+def expected_key_sequence(case: dict[str, Any]) -> list[str] | None:
+    if "target_keys" in case:
+        return list(case["target_keys"])
+    expected_slots = case.get("expected_slots")
+    if isinstance(expected_slots, dict):
+        return [str(key) for key in expected_slots.keys()]
+    return None
+
+
+def build_key_sequence_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    labeled = [row for row in results if row.get("key_sequence_correct") is not None]
+    correct = sum(1 for row in labeled if row.get("key_sequence_correct"))
+    return {
+        "labeled_cases": len(labeled),
+        "correct_count": correct,
+        "accuracy": correct / len(labeled) if labeled else None,
+    }
+
+
 def sample_next_token(logits: torch.Tensor, temperature: float, top_k: int) -> int:
     if temperature <= 0:
         return int(torch.argmax(logits).item())
@@ -357,6 +394,9 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     expected_behavior = case.get("expected_behavior")
     predicted_behavior = infer_behavior(completion)
     behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
+    expected_keys = expected_key_sequence(case)
+    generated_keys = generated_key_sequence(completion) if expected_keys is not None else None
+    key_sequence_correct = generated_keys == expected_keys if expected_keys is not None else None
     passed = not missing and not present_forbidden and (json_ok is not False)
     slot_error = bool(behavior_correct and (missing or present_forbidden))
     return {
@@ -369,6 +409,9 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
         "expected_behavior": expected_behavior,
         "predicted_behavior": predicted_behavior,
         "behavior_correct": behavior_correct,
+        "expected_key_sequence": expected_keys,
+        "generated_key_sequence": generated_keys,
+        "key_sequence_correct": key_sequence_correct,
         "slot_error": slot_error,
         "passed": passed,
     }
@@ -415,7 +458,7 @@ def main() -> None:
         score = score_case(case, generated["completion"])
         case_metadata = {
             key: case[key]
-            for key in ["slot_family", "eval_tier", "expected_slots"]
+            for key in ["slot_family", "eval_tier", "expected_slots", "target_keys"]
             if key in case
         }
         results.append(
@@ -430,6 +473,7 @@ def main() -> None:
 
     passed = sum(1 for row in results if row["passed"])
     behavior_confusion = build_behavior_confusion(results)
+    key_sequence_summary = build_key_sequence_summary(results)
     payload = {
         "metadata": {
             "config": args.config,
@@ -451,6 +495,9 @@ def main() -> None:
         "behavior_labeled_cases": behavior_confusion["labeled_cases"],
         "behavior_correct_count": behavior_confusion["correct_count"],
         "behavior_accuracy": behavior_confusion["accuracy"],
+        "key_sequence_labeled_cases": key_sequence_summary["labeled_cases"],
+        "key_sequence_correct_count": key_sequence_summary["correct_count"],
+        "key_sequence_accuracy": key_sequence_summary["accuracy"],
         "results": results,
     }
     path = Path(args.output)
