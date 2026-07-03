@@ -17,6 +17,7 @@ EVAL_CASES = 64
 TARGET_FIELDS = 3
 DISTRACTOR_FIELDS = 4
 EVAL_MODES = ["mirror", "covered", "heldout", "ladder", "coverage_ladder"]
+COMPLETION_MODES = ["keyvalue", "key_only"]
 
 KEYS = [
     "symbol",
@@ -84,23 +85,37 @@ def repo_context(targets: list[dict[str, str]], distractors: list[dict[str, str]
     return "\n".join(f"{field['key']}: {field['value']}" for field in rows)
 
 
-def user_prompt(targets: list[dict[str, str]]) -> str:
+def user_prompt(targets: list[dict[str, str]], completion_mode: str = "keyvalue") -> str:
     keys = ", ".join(field["key"] for field in targets)
+    if completion_mode == "key_only":
+        return f"List these repo_context keys exactly and in order: {keys}. Return only one key per line."
     return f"Copy these repo_context fields exactly and in order: {keys}. Return only key=value lines."
 
 
-def assistant_text(targets: list[dict[str, str]]) -> str:
+def assistant_text(targets: list[dict[str, str]], completion_mode: str = "keyvalue") -> str:
+    if completion_mode == "key_only":
+        return "\n".join(field["key"] for field in targets)
     return "\n".join(f"{field['key']}={field['value']}" for field in targets)
 
 
-def chat_prompt(targets: list[dict[str, str]], distractors: list[dict[str, str]], rng: random.Random) -> str:
+def chat_prompt(
+    targets: list[dict[str, str]],
+    distractors: list[dict[str, str]],
+    rng: random.Random,
+    completion_mode: str = "keyvalue",
+) -> str:
+    response_instruction = (
+        "Return only exact key names, one per line."
+        if completion_mode == "key_only"
+        else "Return only exact key=value lines."
+    )
     return (
         "<|system|>\n"
-        f"{SYSTEM} Return only exact key=value lines.\n\n"
+        f"{SYSTEM} {response_instruction}\n\n"
         "<|repo_context|>\n"
         f"{repo_context(targets, distractors, rng)}\n\n"
         "<|user|>\n"
-        f"{user_prompt(targets)}\n\n"
+        f"{user_prompt(targets, completion_mode=completion_mode)}\n\n"
         "<|assistant|>\n"
     )
 
@@ -117,34 +132,71 @@ def variant_seed(seed: int, row_index: int, variant_index: int = 0) -> int:
     return seed + row_index * 17 + variant_index * 1009
 
 
-def record(row: dict[str, Any], seed: int, variant_index: int = 0) -> dict[str, Any]:
+def record(
+    row: dict[str, Any],
+    seed: int,
+    variant_index: int = 0,
+    completion_mode: str = "keyvalue",
+) -> dict[str, Any]:
+    if completion_mode not in COMPLETION_MODES:
+        raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     row_index = int(row["index"])
     rng = random.Random(variant_seed(seed, row_index, variant_index))
     targets, distractors = choose_fields(row, rng)
+    response_instruction = (
+        "Return only exact key names, one per line."
+        if completion_mode == "key_only"
+        else "Return only exact key=value lines."
+    )
+    expected_behavior = "copy_key_sequence" if completion_mode == "key_only" else "copy_slot_values"
+    slot_family = "keyvalue_repo_key_only" if completion_mode == "key_only" else "keyvalue_repo_copy"
     return {
-        "behavior": "copy_slot_values",
-        "slot_family": "keyvalue_repo_copy",
+        "behavior": expected_behavior,
+        "slot_family": slot_family,
         "source_row_index": row_index,
         "train_variant_index": variant_index,
+        "target_keys": [field["key"] for field in targets],
         "expected_slots": expected_slots(targets),
-        "system": f"{SYSTEM} Return only exact key=value lines.",
+        "system": f"{SYSTEM} {response_instruction}",
         "repo_context": repo_context(targets, distractors, rng),
-        "messages": [{"role": "user", "content": user_prompt(targets)}],
-        "trace": [{"type": "assistant", "content": assistant_text(targets)}],
+        "messages": [{"role": "user", "content": user_prompt(targets, completion_mode=completion_mode)}],
+        "trace": [{"type": "assistant", "content": assistant_text(targets, completion_mode=completion_mode)}],
     }
 
 
-def case(name: str, row: dict[str, Any], eval_tier: str, seed: int) -> dict[str, Any]:
+def case(
+    name: str,
+    row: dict[str, Any],
+    eval_tier: str,
+    seed: int,
+    completion_mode: str = "keyvalue",
+) -> dict[str, Any]:
+    if completion_mode not in COMPLETION_MODES:
+        raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     rng = random.Random(seed + int(row["index"]) * 17)
     targets, distractors = choose_fields(row, rng)
+    expected_behavior = "copy_key_sequence" if completion_mode == "key_only" else "copy_slot_values"
+    slot_family = "keyvalue_repo_key_only" if completion_mode == "key_only" else "keyvalue_repo_copy"
+    required_substrings = (
+        [field["key"] for field in targets]
+        if completion_mode == "key_only"
+        else [f"{field['key']}={field['value']}" for field in targets]
+    )
+    forbidden = (
+        [field["key"] for field in distractors]
+        if completion_mode == "key_only"
+        else forbidden_substrings(distractors)
+    )
     return {
         "name": name,
-        "prompt": chat_prompt(targets, distractors, rng),
-        "required_substrings": [f"{field['key']}={field['value']}" for field in targets],
-        "forbidden_substrings": forbidden_substrings(distractors),
-        "expected_behavior": "copy_slot_values",
-        "slot_family": "keyvalue_repo_copy",
+        "prompt": chat_prompt(targets, distractors, rng, completion_mode=completion_mode),
+        "required_substrings": required_substrings,
+        "forbidden_substrings": forbidden,
+        "expected_behavior": expected_behavior,
+        "slot_family": slot_family,
         "expected_slots": expected_slots(targets),
+        "expected_key_sequence": [field["key"] for field in targets],
+        "enforce_key_sequence": True,
         "eval_tier": eval_tier,
         "value_formats": sorted({field["value_format"] for field in targets}),
         "target_keys": [field["key"] for field in targets],
@@ -155,16 +207,19 @@ def build_train_records(
     seed: int = DEFAULT_SEED,
     train_records: int = TRAIN_RECORDS,
     train_variants_per_row: int = TRAIN_VARIANTS_PER_ROW,
+    completion_mode: str = "keyvalue",
 ) -> list[dict[str, Any]]:
     if train_records < 1:
         raise ValueError("train_records must be positive")
     if train_variants_per_row < 1:
         raise ValueError("train_variants_per_row must be positive")
+    if completion_mode not in COMPLETION_MODES:
+        raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     records: list[dict[str, Any]] = []
     for index in range(train_records):
         row = spec(index)
         for variant_index in range(train_variants_per_row):
-            records.append(record(row, seed=seed, variant_index=variant_index))
+            records.append(record(row, seed=seed, variant_index=variant_index, completion_mode=completion_mode))
     return records
 
 
@@ -173,6 +228,7 @@ def build_eval_cases(
     eval_mode: str = "ladder",
     train_records: int = TRAIN_RECORDS,
     eval_cases: int = EVAL_CASES,
+    completion_mode: str = "keyvalue",
 ) -> list[dict[str, Any]]:
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"eval_mode must be one of {', '.join(EVAL_MODES)}")
@@ -180,6 +236,8 @@ def build_eval_cases(
         raise ValueError("train_records must be positive")
     if eval_cases < 1:
         raise ValueError("eval_cases must be positive")
+    if completion_mode not in COMPLETION_MODES:
+        raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     cases: list[dict[str, Any]] = []
     if eval_mode in {"mirror", "ladder", "coverage_ladder"}:
         cases.extend(
@@ -188,6 +246,7 @@ def build_eval_cases(
                 spec(index % train_records),
                 "seen_slot",
                 seed=seed,
+                completion_mode=completion_mode,
             )
             for index in range(eval_cases)
         )
@@ -198,6 +257,7 @@ def build_eval_cases(
                 spec_with_seen_values(train_records + index, index % train_records, seed=seed),
                 "covered_value_slot",
                 seed=seed,
+                completion_mode=completion_mode,
             )
             for index in range(eval_cases)
         )
@@ -208,6 +268,7 @@ def build_eval_cases(
                 spec(train_records + index),
                 "heldout_slot",
                 seed=seed,
+                completion_mode=completion_mode,
             )
             for index in range(eval_cases)
         )
@@ -226,6 +287,7 @@ def main() -> None:
     parser.add_argument("--manifest-output", default="examples/agentcoder_keyvalue_copy_manifest.json")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--eval-mode", choices=EVAL_MODES, default="ladder")
+    parser.add_argument("--completion-mode", choices=COMPLETION_MODES, default="keyvalue")
     parser.add_argument("--train-records", type=int, default=TRAIN_RECORDS)
     parser.add_argument("--train-variants-per-row", type=int, default=TRAIN_VARIANTS_PER_ROW)
     parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
@@ -235,12 +297,14 @@ def main() -> None:
         seed=args.seed,
         train_records=args.train_records,
         train_variants_per_row=args.train_variants_per_row,
+        completion_mode=args.completion_mode,
     )
     eval_cases = build_eval_cases(
         seed=args.seed,
         eval_mode=args.eval_mode,
         train_records=args.train_records,
         eval_cases=args.eval_cases,
+        completion_mode=args.completion_mode,
     )
     train_path = Path(args.train_output)
     cases_path = Path(args.cases_output)
@@ -262,6 +326,7 @@ def main() -> None:
         "note": "Structured synthetic repo_context key-value copy task; not a benchmark dataset.",
         "seed": args.seed,
         "eval_mode": args.eval_mode,
+        "completion_mode": args.completion_mode,
         "train_output": str(train_path),
         "cases_output": str(cases_path),
         "train_records": len(train_records),

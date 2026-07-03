@@ -8,6 +8,7 @@ import sys
 import yaml
 
 from scripts.make_agentcoder_keyvalue_copy_sft import (
+    COMPLETION_MODES,
     DISTRACTOR_FIELDS,
     EVAL_CASES,
     KEYS,
@@ -30,6 +31,7 @@ def test_keyvalue_generator_builds_ladder_with_distractors_and_formats():
 
     assert len(records) == TRAIN_RECORDS
     assert TRAIN_VARIANTS_PER_ROW == 1
+    assert COMPLETION_MODES == ["keyvalue", "key_only"]
     assert len(cases) == EVAL_CASES * 2
     assert {row["slot_family"] for row in records} == {"keyvalue_repo_copy"}
     assert {row["slot_family"] for row in cases} == {"keyvalue_repo_copy"}
@@ -37,6 +39,8 @@ def test_keyvalue_generator_builds_ladder_with_distractors_and_formats():
     assert {row["eval_tier"] for row in cases} == {"seen_slot", "heldout_slot"}
     assert all(len(row["expected_slots"]) == TARGET_FIELDS for row in records)
     assert all(len(row["expected_slots"]) == TARGET_FIELDS for row in cases)
+    assert all(len(row["target_keys"]) == TARGET_FIELDS for row in records)
+    assert all(row["enforce_key_sequence"] is True for row in cases)
     assert all(len(row["forbidden_substrings"]) == DISTRACTOR_FIELDS for row in cases)
     assert set(KEYS).issubset({key for row in cases for key in row["target_keys"]})
     assert set(VALUE_FORMATS).issubset({fmt for row in cases for fmt in row["value_formats"]})
@@ -79,6 +83,44 @@ def test_keyvalue_train_variants_randomize_layouts_per_source_row():
     assert {row["train_variant_index"] for row in first_row_records} == {0, 1, 2, 3}
     assert len(expected_slot_sets) > 1
     assert len(context_orders) > 1
+
+
+def test_keyvalue_key_only_mode_emits_requested_key_sequence_without_values():
+    records = build_train_records(
+        seed=17,
+        train_records=4,
+        train_variants_per_row=2,
+        completion_mode="key_only",
+    )
+    cases = build_eval_cases(
+        seed=17,
+        eval_mode="coverage_ladder",
+        train_records=4,
+        eval_cases=2,
+        completion_mode="key_only",
+    )
+    first_record = records[0]
+    first_case = cases[0]
+    completion = first_record["trace"][0]["content"]
+
+    assert len(records) == 8
+    assert {row["behavior"] for row in records} == {"copy_key_sequence"}
+    assert {row["slot_family"] for row in records} == {"keyvalue_repo_key_only"}
+    assert "=" not in completion
+    assert completion.splitlines() == first_record["target_keys"]
+    assert "one per line" in first_record["system"]
+    assert "Return only one key per line" in first_record["messages"][0]["content"]
+    assert first_case["expected_behavior"] == "copy_key_sequence"
+    assert first_case["slot_family"] == "keyvalue_repo_key_only"
+    assert first_case["required_substrings"] == first_case["target_keys"]
+    assert first_case["expected_key_sequence"] == first_case["target_keys"]
+    assert first_case["enforce_key_sequence"] is True
+    assert all("=" not in value for value in first_case["required_substrings"])
+    assert {row["eval_tier"] for row in cases} == {
+        "seen_slot",
+        "covered_value_slot",
+        "heldout_slot",
+    }
 
 
 def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():

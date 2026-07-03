@@ -195,11 +195,18 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
             item["eval_tier"] = str(case["eval_tier"])
         if "expected_slots" in case:
             item["expected_slots"] = case["expected_slots"]
+        if "expected_key_sequence" in case:
+            expected_key_sequence = case["expected_key_sequence"]
+            if not isinstance(expected_key_sequence, list):
+                raise ValueError(f"case {index} expected_key_sequence must be a list")
+            item["expected_key_sequence"] = [str(value) for value in expected_key_sequence]
         if "target_keys" in case:
             target_keys = case["target_keys"]
             if not isinstance(target_keys, list):
                 raise ValueError(f"case {index} target_keys must be a list")
             item["target_keys"] = [str(value) for value in target_keys]
+        if "enforce_key_sequence" in case:
+            item["enforce_key_sequence"] = bool(case["enforce_key_sequence"])
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
         if "expected_behavior" in case:
@@ -304,20 +311,26 @@ def build_behavior_confusion(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def generated_key_sequence(completion: str) -> list[str]:
+def generated_key_sequence(completion: str, allowed_keys: list[str] | None = None) -> list[str]:
+    allowed = set(allowed_keys or [])
     keys: list[str] = []
     for raw_line in completion.replace("<eos>", "\n").splitlines():
         line = raw_line.strip()
-        if not line or "=" not in line:
+        if not line:
             continue
-        key, _ = line.split("=", 1)
+        if "=" in line:
+            key, _ = line.split("=", 1)
+        else:
+            key = line
         key = key.strip()
-        if key:
+        if key and (not allowed or key in allowed):
             keys.append(key)
     return keys
 
 
 def expected_key_sequence(case: dict[str, Any]) -> list[str] | None:
+    if "expected_key_sequence" in case:
+        return list(case["expected_key_sequence"])
     if "target_keys" in case:
         return list(case["target_keys"])
     expected_slots = case.get("expected_slots")
@@ -393,12 +406,19 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     json_ok = parsed_json == expected_json if expected_json is not None else None
     expected_behavior = case.get("expected_behavior")
     predicted_behavior = infer_behavior(completion)
-    behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
     expected_keys = expected_key_sequence(case)
-    generated_keys = generated_key_sequence(completion) if expected_keys is not None else None
+    generated_keys = generated_key_sequence(completion, allowed_keys=expected_keys) if expected_keys is not None else None
     key_sequence_correct = generated_keys == expected_keys if expected_keys is not None else None
+    if expected_behavior == "copy_key_sequence" and generated_keys and predicted_behavior == "unknown":
+        predicted_behavior = "copy_key_sequence"
+    behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
+    enforce_key_sequence = bool(case.get("enforce_key_sequence", expected_keys is not None))
     passed = not missing and not present_forbidden and (json_ok is not False)
+    if enforce_key_sequence:
+        passed = passed and key_sequence_correct is True
     slot_error = bool(behavior_correct and (missing or present_forbidden))
+    if behavior_correct and enforce_key_sequence and key_sequence_correct is False:
+        slot_error = True
     return {
         "missing_required_substrings": missing,
         "forbidden_substrings": case.get("forbidden_substrings", []),
@@ -412,6 +432,7 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
         "expected_key_sequence": expected_keys,
         "generated_key_sequence": generated_keys,
         "key_sequence_correct": key_sequence_correct,
+        "enforce_key_sequence": enforce_key_sequence,
         "slot_error": slot_error,
         "passed": passed,
     }
@@ -458,7 +479,7 @@ def main() -> None:
         score = score_case(case, generated["completion"])
         case_metadata = {
             key: case[key]
-            for key in ["slot_family", "eval_tier", "expected_slots", "target_keys"]
+            for key in ["slot_family", "eval_tier", "expected_slots", "expected_key_sequence", "target_keys"]
             if key in case
         }
         results.append(

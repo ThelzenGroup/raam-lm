@@ -88,6 +88,7 @@ def main() -> None:
         choices=["mirror", "covered", "heldout", "ladder", "coverage_ladder"],
         default="ladder",
     )
+    parser.add_argument("--completion-mode", choices=["keyvalue", "key_only"], default="keyvalue")
     parser.add_argument("--train-records", type=int, default=96)
     parser.add_argument("--train-variants-per-row", type=int, default=1)
     parser.add_argument("--eval-cases", type=int, default=64)
@@ -129,6 +130,8 @@ def main() -> None:
             str(args.seed),
             "--eval-mode",
             args.eval_mode,
+            "--completion-mode",
+            args.completion_mode,
             "--train-records",
             str(args.train_records),
             "--train-variants-per-row",
@@ -193,6 +196,7 @@ def main() -> None:
         "eval_target_key_counts": data_payload.get("eval_target_key_counts"),
         "eval_value_format_counts": data_payload.get("eval_value_format_counts"),
         "eval_mode": data_payload.get("eval_mode", args.eval_mode),
+        "completion_mode": data_payload.get("completion_mode", args.completion_mode),
         "slot_family_summary": summarize_slot_families(eval_payload),
         "slot_ladder_summary": summarize_ladder(eval_payload),
         "tokenizer": str(tokenizer),
