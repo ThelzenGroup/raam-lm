@@ -1790,6 +1790,71 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## AgentCoder Atomic Anchor Seed Repeatability Gate
+
+Added a focused repeatability harness for RAAM anchor variants:
+
+- `scripts/run_agentcoder_atomic_anchor_seed_sweep.py`
+- `tests/test_agentcoder_atomic_anchor_seed_sweep.py`
+- `docs/AGENTIC_CODING_EVALS.md` now documents the learned-vs-hybrid1 seed gate
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/run_agentcoder_atomic_anchor_seed_sweep.py scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py
+python3 -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Result: focused local tests passed, `29 passed in 0.11s`; syntax and diff checks
+passed.
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_anchor_seed_sweep.py \
+  --configs learned=configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml hybrid1=configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --seeds 17,29,41 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 1200 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_anchor_seed_sweep_learned_vs_hybrid1_20260703T081417Z \
+  --device cuda \
+  --clean
+```
+
+Remote focused tests passed, `29 passed in 0.13s`.
+
+| Config | Seeds | Exact Pass Mean | Min | Max | Total Exact Pass | Mean Val Loss | Mean Tokens/sec |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| learned 4-anchor | `17,29,41` | 57 / 64 | 57 / 64 | 57 / 64 | 171 / 192 | 0.080535 | 21805.9 |
+| one-token hybrid | `17,29,41` | 59 / 64 | 59 / 64 | 59 / 64 | 177 / 192 | 0.077860 | 21511.2 |
+
+Per-seed rows:
+
+| Config | Seed | Exact Pass | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: |
+| learned 4-anchor | 17 | 57 / 64 | 0.080535 | 21482.6 |
+| learned 4-anchor | 29 | 57 / 64 | 0.080535 | 21786.6 |
+| learned 4-anchor | 41 | 57 / 64 | 0.080535 | 22148.5 |
+| one-token hybrid | 17 | 59 / 64 | 0.077860 | 21577.1 |
+| one-token hybrid | 29 | 59 / 64 | 0.077860 | 21505.7 |
+| one-token hybrid | 41 | 59 / 64 | 0.077860 | 21450.9 |
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_anchor_seed_sweep_learned_vs_hybrid1_20260703T081417Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: the one-token hybrid is repeatably better than the learned
+4-anchor route on this mirrored `64`-binding atomic gate, but neither passes the
+`64 / 64` repeatability threshold at the default `1200` steps. RAAM is therefore
+not cleared for broader chat/coding scale from this evidence alone. The next
+useful architecture gate is either a repeatability check at `2400` steps for the
+one-token hybrid, or a harder held-out/decoy atomic slot-copy variant that tests
+whether the copied binding comes from current context rather than memorized
+mirrored training pairs.
+
 ## AgentCoder Atomic Cardinality Sweep
 
 Added a reusable cardinality sweep wrapper for the atomic copy gate:
