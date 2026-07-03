@@ -1033,3 +1033,73 @@ step is to run a small real-data slice gate that is not mirrored: keep the same
 exact eval prompts, train on a slightly larger curated subset, and require
 held-out validation plus qualitative behavior to improve before launching a
 larger paid continuation.
+
+## AgentCoder Non-Mirrored Slice Gate
+
+Added the next tiny non-mirrored gate:
+
+- `examples/agentcoder_slice_train.jsonl`
+- `examples/agentcoder_slice_eval_cases.json`
+- `configs/scratch/raam_agentcoder_slice_gate.yaml`
+- `scripts/run_agentcoder_slice_gate.py`
+- `scripts/eval_overfit_sanity.py --cases-json`
+
+Local validation before the Vast run:
+
+```bash
+python3 -m py_compile scripts/eval_overfit_sanity.py scripts/run_agentcoder_slice_gate.py scripts/run_agentcoder_overfit_sanity.py
+python3 scripts/train_tokenizer.py examples/agentcoder_slice_train.jsonl --output work/slice_tokenizer_smoke/tokenizer.json --vocab-size 1024
+git diff --check
+```
+
+Overfit-style but non-mirrored run on Vast RTX 5090:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_slice_gate.py \
+  --config configs/scratch/raam_agentcoder_slice_gate.yaml \
+  --data examples/agentcoder_slice_train.jsonl \
+  --cases-json examples/agentcoder_slice_eval_cases.json \
+  --output-dir /root/raam-lm/runs/agentcoder_slice_gate_20260703T025341Z \
+  --device cuda \
+  --clean \
+  --no-fail
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_slice_gate_20260703T025341Z`.
+The pull includes `summary.json`, `slice_eval.json`, qualitative samples,
+manifests, tokenizer, train log, runner log, and the small final checkpoint.
+Both Vast RTX 5090 instances were verified stopped after the pull.
+
+| Metric | Value |
+| --- | ---: |
+| Held-out slice pass rate | 3 / 6 |
+| Train docs | 10 |
+| Validation docs | 2 |
+| Train tokens | 1295 |
+| Validation tokens | 200 |
+| Final train loss | 0.024610433727502823 |
+| Final validation loss | 6.021189093589783 |
+| Last checkpoint step | 1599 |
+| Tokens seen | 2457600 |
+| Final tokens/sec | 51556.69678444392 |
+| Peak allocated VRAM MB | 130.5009765625 |
+
+Held-out checks:
+
+| Case | Result |
+| --- | --- |
+| add patch + pytest | pass |
+| strict JSON Python-file command | pass |
+| risky-edit clarifying question | fail |
+| plain debugging process | fail |
+| held-out `is_even` completion | fail |
+| default Python test command | pass |
+
+The failures are informative: the model copied the nearest memorized pattern
+instead of generalizing. The risky-edit prompt produced the JSON command, the
+debugging prompt produced the boolean-flag patch, and `is_even` became the
+trained `is_odd` function. This means the pipeline is healthy enough to learn,
+but the tiny non-mirrored gate is still memorization-heavy. The next training
+step should be a broader curated supervised set with multiple paraphrases per
+behavior and a separate held-out eval set, not an immediate large paid run.
