@@ -46,6 +46,32 @@ def summarize_slot_families(eval_payload: dict[str, Any]) -> dict[str, dict[str,
     return summary
 
 
+def summarize_ladder(eval_payload: dict[str, Any]) -> dict[str, Any]:
+    buckets: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for row in eval_payload.get("results", []):
+        family = str(row.get("slot_family", "unknown"))
+        tier = str(row.get("eval_tier", "heldout_slot"))
+        buckets[family][tier].append(row)
+
+    summary: dict[str, Any] = {}
+    for family, tier_rows in sorted(buckets.items()):
+        summary[family] = {}
+        for tier, rows in sorted(tier_rows.items()):
+            passed = sum(1 for row in rows if row.get("passed"))
+            slot_errors = sum(1 for row in rows if row.get("slot_error"))
+            behavior_labeled = [row for row in rows if row.get("behavior_correct") is not None]
+            behavior_correct = sum(1 for row in behavior_labeled if row.get("behavior_correct"))
+            summary[family][tier] = {
+                "case_count": len(rows),
+                "pass_count": passed,
+                "pass_rate": passed / len(rows) if rows else None,
+                "slot_error_count": slot_errors,
+                "behavior_accuracy": behavior_correct / len(behavior_labeled) if behavior_labeled else None,
+                "failed_cases": [row.get("name") for row in rows if not row.get("passed")],
+            }
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the larger AgentCoder slot-copy diagnostic gate.")
     parser.add_argument("--config", default="configs/scratch/raam_agentcoder_curated_gate.yaml")
@@ -56,6 +82,7 @@ def main() -> None:
     parser.add_argument("--seq-len", type=int, default=256)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--eval-batches", type=int, default=None)
+    parser.add_argument("--eval-mode", choices=["heldout", "ladder"], default="ladder")
     parser.add_argument("--max-new-tokens", type=int, default=220)
     parser.add_argument("--min-pass-rate", type=float, default=0.9)
     parser.add_argument("--seed", type=int, default=17)
@@ -90,6 +117,8 @@ def main() -> None:
             str(data_manifest),
             "--seed",
             str(args.seed),
+            "--eval-mode",
+            args.eval_mode,
         ]
     )
     run(
@@ -181,7 +210,10 @@ def main() -> None:
         "behavior_counts": data_payload["behavior_counts"],
         "train_slot_family_counts": data_payload["train_slot_family_counts"],
         "eval_slot_family_counts": data_payload["eval_slot_family_counts"],
+        "eval_tier_counts": data_payload.get("eval_tier_counts"),
+        "eval_mode": data_payload.get("eval_mode", args.eval_mode),
         "slot_family_summary": summarize_slot_families(eval_payload),
+        "slot_ladder_summary": summarize_ladder(eval_payload),
         "tokenizer": str(tokenizer),
         "packed_manifest": str(packed / "manifest.json"),
         "train_manifest": str(train_dir / "manifest.json"),

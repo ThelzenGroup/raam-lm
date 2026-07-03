@@ -13,6 +13,7 @@ SYSTEM = "You are RAAM-AgentCoder, a concise software-engineering assistant."
 DEFAULT_SEED = 17
 TRAIN_PER_FAMILY = 48
 EVAL_PER_FAMILY = 16
+SEEN_EVAL_PER_FAMILY = 16
 T = TypeVar("T")
 
 
@@ -48,6 +49,7 @@ def case(
     slot_family: str,
     expected_slots: dict[str, str],
     forbidden_substrings: list[str],
+    eval_tier: str = "heldout_slot",
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -57,6 +59,7 @@ def case(
         "expected_behavior": expected_behavior,
         "slot_family": slot_family,
         "expected_slots": expected_slots,
+        "eval_tier": eval_tier,
     }
 
 
@@ -319,7 +322,14 @@ def repo_lookup_record(rng: random.Random, target: dict[str, str], specs: list[d
     )
 
 
-def repo_lookup_case(rng: random.Random, index: int, target: dict[str, str], specs: list[dict[str, str]]) -> dict[str, Any]:
+def repo_lookup_case(
+    rng: random.Random,
+    index: int,
+    target: dict[str, str],
+    specs: list[dict[str, str]],
+    *,
+    eval_tier: str = "heldout_slot",
+) -> dict[str, Any]:
     repo_context, forbidden = repo_context_for_repo_lookup(rng, target, specs)
     symbol = target["symbol"]
     impl_file = target["impl_file"]
@@ -332,13 +342,14 @@ def repo_lookup_case(rng: random.Random, index: int, target: dict[str, str], spe
         repo_context,
     )
     return case(
-        f"slot_repo_lookup_{index:02d}_{symbol}",
+        f"slot_{eval_tier}_repo_lookup_{index:02d}_{symbol}",
         prompt,
         [f"{symbol} is implemented in {impl_file}", f"def {symbol}"],
         expected_behavior="repo_context_lookup",
         slot_family="repo_lookup",
         expected_slots={"symbol": symbol, "file": impl_file},
         forbidden_substrings=forbidden,
+        eval_tier=eval_tier,
     )
 
 
@@ -392,7 +403,14 @@ def arithmetic_record(rng: random.Random, target: dict[str, str], specs: list[di
     )
 
 
-def arithmetic_case(rng: random.Random, index: int, target: dict[str, str], specs: list[dict[str, str]]) -> dict[str, Any]:
+def arithmetic_case(
+    rng: random.Random,
+    index: int,
+    target: dict[str, str],
+    specs: list[dict[str, str]],
+    *,
+    eval_tier: str = "heldout_slot",
+) -> dict[str, Any]:
     repo_context, forbidden = patch_context_for_arithmetic(rng, target, specs)
     prompt = chat_prompt(
         (
@@ -403,7 +421,7 @@ def arithmetic_case(rng: random.Random, index: int, target: dict[str, str], spec
         repo_context,
     )
     return case(
-        f"slot_patch_return_{index:02d}_{target['helper']}",
+        f"slot_{eval_tier}_patch_return_{index:02d}_{target['helper']}",
         prompt,
         [
             f"--- a/{target['path']}",
@@ -420,6 +438,7 @@ def arithmetic_case(rng: random.Random, index: int, target: dict[str, str], spec
             "test": target["test_path"],
         },
         forbidden_substrings=forbidden,
+        eval_tier=eval_tier,
     )
 
 
@@ -473,7 +492,14 @@ def literal_record(rng: random.Random, target: dict[str, str], specs: list[dict[
     )
 
 
-def literal_case(rng: random.Random, index: int, target: dict[str, str], specs: list[dict[str, str]]) -> dict[str, Any]:
+def literal_case(
+    rng: random.Random,
+    index: int,
+    target: dict[str, str],
+    specs: list[dict[str, str]],
+    *,
+    eval_tier: str = "heldout_slot",
+) -> dict[str, Any]:
     repo_context, forbidden = patch_context_for_literal(rng, target, specs)
     prompt = chat_prompt(
         (
@@ -484,7 +510,7 @@ def literal_case(rng: random.Random, index: int, target: dict[str, str], specs: 
         repo_context,
     )
     return case(
-        f"slot_patch_literal_{index:02d}_{target['helper']}",
+        f"slot_{eval_tier}_patch_literal_{index:02d}_{target['helper']}",
         prompt,
         [
             f"--- a/{target['path']}",
@@ -501,6 +527,7 @@ def literal_case(rng: random.Random, index: int, target: dict[str, str], specs: 
             "test": target["test_path"],
         },
         forbidden_substrings=forbidden,
+        eval_tier=eval_tier,
     )
 
 
@@ -525,15 +552,42 @@ def build_train_records(seed: int = DEFAULT_SEED) -> list[dict[str, Any]]:
     return rows
 
 
-def build_eval_cases(seed: int = DEFAULT_SEED) -> list[dict[str, Any]]:
+def build_eval_cases(seed: int = DEFAULT_SEED, eval_mode: str = "heldout") -> list[dict[str, Any]]:
+    if eval_mode not in {"heldout", "ladder"}:
+        raise ValueError("eval_mode must be 'heldout' or 'ladder'")
     rng = random.Random(seed + 1000)
     repo_train, repo_eval = split_specs(repo_specs(), seed + 1)
     arithmetic_train, arithmetic_eval = split_specs(arithmetic_specs(), seed + 2)
     literal_train, literal_eval = split_specs(literal_specs(), seed + 3)
+    all_repo = repo_train + repo_eval
+    all_arithmetic = arithmetic_train + arithmetic_eval
+    all_literal = literal_train + literal_eval
     cases: list[dict[str, Any]] = []
-    cases.extend(repo_lookup_case(rng, i, target, repo_train + repo_eval) for i, target in enumerate(repo_eval))
-    cases.extend(arithmetic_case(rng, i, target, arithmetic_train + arithmetic_eval) for i, target in enumerate(arithmetic_eval))
-    cases.extend(literal_case(rng, i, target, literal_train + literal_eval) for i, target in enumerate(literal_eval))
+    if eval_mode == "ladder":
+        cases.extend(
+            repo_lookup_case(rng, i, target, all_repo, eval_tier="seen_slot")
+            for i, target in enumerate(repo_train[:SEEN_EVAL_PER_FAMILY])
+        )
+        cases.extend(
+            arithmetic_case(rng, i, target, all_arithmetic, eval_tier="seen_slot")
+            for i, target in enumerate(arithmetic_train[:SEEN_EVAL_PER_FAMILY])
+        )
+        cases.extend(
+            literal_case(rng, i, target, all_literal, eval_tier="seen_slot")
+            for i, target in enumerate(literal_train[:SEEN_EVAL_PER_FAMILY])
+        )
+    cases.extend(
+        repo_lookup_case(rng, i, target, all_repo, eval_tier="heldout_slot")
+        for i, target in enumerate(repo_eval)
+    )
+    cases.extend(
+        arithmetic_case(rng, i, target, all_arithmetic, eval_tier="heldout_slot")
+        for i, target in enumerate(arithmetic_eval)
+    )
+    cases.extend(
+        literal_case(rng, i, target, all_literal, eval_tier="heldout_slot")
+        for i, target in enumerate(literal_eval)
+    )
     return cases
 
 
@@ -548,10 +602,11 @@ def main() -> None:
     parser.add_argument("--cases-output", default="examples/agentcoder_slotcopy_eval_cases.json")
     parser.add_argument("--manifest-output", default="examples/agentcoder_slotcopy_manifest.json")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--eval-mode", choices=["heldout", "ladder"], default="heldout")
     args = parser.parse_args()
 
     train_records = build_train_records(seed=args.seed)
-    eval_cases = build_eval_cases(seed=args.seed)
+    eval_cases = build_eval_cases(seed=args.seed, eval_mode=args.eval_mode)
     train_path = Path(args.train_output)
     cases_path = Path(args.cases_output)
     manifest_path = Path(args.manifest_output)
@@ -562,10 +617,12 @@ def main() -> None:
     behavior_counts = Counter(str(row["behavior"]) for row in train_records)
     train_family_counts = Counter(str(row["slot_family"]) for row in train_records)
     eval_family_counts = Counter(str(row["slot_family"]) for row in eval_cases)
+    eval_tier_counts = Counter(str(row.get("eval_tier", "heldout_slot")) for row in eval_cases)
     manifest = {
         "format": "agentcoder-slotcopy-sft-v1",
         "note": "Deterministic synthetic slot-copy supervision for repo-context diagnostics; not a benchmark dataset.",
         "seed": args.seed,
+        "eval_mode": args.eval_mode,
         "train_output": str(train_path),
         "cases_output": str(cases_path),
         "train_records": len(train_records),
@@ -573,8 +630,10 @@ def main() -> None:
         "behavior_counts": dict(sorted(behavior_counts.items())),
         "train_slot_family_counts": dict(sorted(train_family_counts.items())),
         "eval_slot_family_counts": dict(sorted(eval_family_counts.items())),
+        "eval_tier_counts": dict(sorted(eval_tier_counts.items())),
         "train_per_family": TRAIN_PER_FAMILY,
         "eval_per_family": EVAL_PER_FAMILY,
+        "seen_eval_per_family": SEEN_EVAL_PER_FAMILY if args.eval_mode == "ladder" else 0,
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

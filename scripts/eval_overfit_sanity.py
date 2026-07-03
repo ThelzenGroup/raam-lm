@@ -191,6 +191,8 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
         }
         if "slot_family" in case:
             item["slot_family"] = str(case["slot_family"])
+        if "eval_tier" in case:
+            item["eval_tier"] = str(case["eval_tier"])
         if "expected_slots" in case:
             item["expected_slots"] = case["expected_slots"]
         if "expected_json" in case:
@@ -394,7 +396,7 @@ def main() -> None:
         score = score_case(case, generated["completion"])
         case_metadata = {
             key: case[key]
-            for key in ["slot_family", "expected_slots"]
+            for key in ["slot_family", "eval_tier", "expected_slots"]
             if key in case
         }
         results.append(

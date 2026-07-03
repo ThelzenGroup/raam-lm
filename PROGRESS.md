@@ -1905,3 +1905,70 @@ After artifact pull, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## AgentCoder Slot-Binding Ladder Diagnostic
+
+Added a seen-vs-heldout ladder to the programmatic slot-copy gate so the next
+GPU run can distinguish basic memorization/copy failure from true held-out slot
+generalization failure.
+
+Updated:
+
+- `scripts/make_agentcoder_slotcopy_sft.py`
+  - keeps the previous `--eval-mode heldout` behavior available
+  - adds `--eval-mode ladder`
+  - ladder eval emits `seen_slot` and `heldout_slot` cases
+- `scripts/eval_overfit_sanity.py`
+  - preserves `eval_tier` in eval result rows
+- `scripts/run_agentcoder_slotcopy_gate.py`
+  - defaults to `--eval-mode ladder`
+  - adds `slot_ladder_summary` grouped by slot family and eval tier
+- `tests/test_agentcoder_slotcopy_generator.py`
+  - covers held-out disjointness, seen-slot overlap, and ladder summaries
+- `docs/AGENTIC_CODING_EVALS.md`
+  - documents the new ladder gate shape
+
+Generator shape:
+
+| Mode | Train Records | Eval Cases | Eval Tiers |
+| --- | ---: | ---: | --- |
+| `heldout` | 144 | 48 | 48 held-out slots |
+| `ladder` | 144 | 96 | 48 seen slots + 48 held-out slots |
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_slotcopy_sft.py scripts/run_agentcoder_slotcopy_gate.py scripts/eval_overfit_sanity.py
+rm -rf work/slotcopy_ladder_smoke && python3 scripts/make_agentcoder_slotcopy_sft.py --train-output work/slotcopy_ladder_smoke/heldout_train.jsonl --cases-output work/slotcopy_ladder_smoke/heldout_cases.json --manifest-output work/slotcopy_ladder_smoke/heldout_manifest.json && python3 scripts/make_agentcoder_slotcopy_sft.py --eval-mode ladder --train-output work/slotcopy_ladder_smoke/ladder_train.jsonl --cases-output work/slotcopy_ladder_smoke/ladder_cases.json --manifest-output work/slotcopy_ladder_smoke/ladder_manifest.json
+python3 -m pytest -q tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- held-out generator emitted `144` train records and `48` eval cases
+- ladder generator emitted `144` train records and `96` eval cases
+- ladder eval tier counts: `48` `seen_slot`, `48` `heldout_slot`
+- focused local tests passed: `6 passed in 0.08s`
+- `git diff --check` passed
+
+Next GPU action:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_slotcopy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_slotcopy_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_slotcopy_ladder_<UTC_TIMESTAMP> \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Interpretation: if `seen_slot` also fails badly, the tiny setup is not even
+copying/memorizing slot-bound examples reliably and should be fixed before any
+larger spend. If `seen_slot` passes but `heldout_slot` fails, the next work is
+architecture/objective/curriculum changes for context binding. If both pass,
+then the slot-copy blocker is no longer the first reason to delay a broader
+chat/coding continuation.

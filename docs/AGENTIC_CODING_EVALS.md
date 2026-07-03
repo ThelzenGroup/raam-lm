@@ -142,7 +142,8 @@ python scripts/run_agentcoder_slotcopy_gate.py \
   --clean
 ```
 
-This gate generates a programmatic curriculum with held-out slot combinations:
+This gate generates a programmatic curriculum plus a seen-vs-heldout diagnostic
+ladder:
 
 - `repo_lookup`: copy the requested symbol and defining file from a repo context
   that includes several unrelated definitions.
@@ -151,12 +152,17 @@ This gate generates a programmatic curriculum with held-out slot combinations:
 - `patch_literal`: patch the exact boolean-flag helper/file/enabled literal from
   repo context while ignoring other flag helpers.
 
-The default generator writes `144` training records and `48` held-out eval cases:
-`48` train and `16` eval cases per slot family. Train and eval expected-slot
-tuples are disjoint. The eval cases include `slot_family` and `expected_slots`,
-and the runner summarizes pass rate, behavior accuracy, and slot-error count per
-family. This is still not a benchmark; it is a preflight for context binding
-before spending on broader chat/coding training.
+The runner default uses `--eval-mode ladder`, which writes `144` training records
+and `96` eval cases: `48` train records, `16` seen-slot eval cases, and `16`
+held-out-slot eval cases per slot family. `seen_slot` cases reuse slot tuples
+from training with regenerated context, while `heldout_slot` cases keep expected
+slot tuples disjoint from training. The eval cases include `slot_family`,
+`eval_tier`, and `expected_slots`; the runner summarizes pass rate, behavior
+accuracy, and slot-error count by family and by ladder tier.
+
+Use `--eval-mode heldout` if you want the older `48` case held-out-only gate.
+This is still not a benchmark; it is a preflight for context binding before
+spending on broader chat/coding training.
 
 ## Comparing Gate Runs
 
