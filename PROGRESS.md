@@ -1103,3 +1103,95 @@ trained `is_odd` function. This means the pipeline is healthy enough to learn,
 but the tiny non-mirrored gate is still memorization-heavy. The next training
 step should be a broader curated supervised set with multiple paraphrases per
 behavior and a separate held-out eval set, not an immediate large paid run.
+
+## AgentCoder Curated Paraphrase SFT Gate
+
+Added a deterministic broader SFT gate with multiple paraphrases per behavior:
+
+- `scripts/make_agentcoder_curated_sft.py`
+- `scripts/run_agentcoder_curated_gate.py`
+- `configs/scratch/raam_agentcoder_curated_gate.yaml`
+
+The generated gate contains 60 training records across 11 behavior families and
+10 held-out eval cases. Behavior families include patching, strict JSON command
+output, risky-edit clarification, debugging, function completion, stack-trace
+diagnosis, repo-context lookup, test-command recommendation, code review, and
+commit summaries.
+
+Local validation before the Vast run:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/run_agentcoder_curated_gate.py scripts/eval_overfit_sanity.py scripts/run_agentcoder_slice_gate.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_smoke/train.jsonl --cases-output work/curated_sft_smoke/cases.json --manifest-output work/curated_sft_smoke/manifest.json
+python3 scripts/train_tokenizer.py work/curated_sft_smoke/train.jsonl --output work/curated_sft_smoke/tokenizer.json --vocab-size 1536
+git diff --check
+```
+
+Remote validation on Vast RTX 5090:
+
+```bash
+/venv/main/bin/python -m py_compile scripts/make_agentcoder_curated_sft.py scripts/run_agentcoder_curated_gate.py scripts/eval_overfit_sanity.py
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python -m pytest -q
+```
+
+Results: targeted generator test passed and the full test suite passed with
+`23 passed in 32.76s`.
+
+Curated gate run:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_20260703T030727Z \
+  --device cuda \
+  --clean \
+  --no-fail
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_20260703T030727Z`.
+The pull includes generated train/eval data, manifests, tokenizer, packed data,
+train log, runner log, exact eval JSON, qualitative samples, and the small final
+checkpoint. Both Vast RTX 5090 instances were verified stopped after the pull.
+
+| Metric | Value |
+| --- | ---: |
+| Held-out curated pass rate | 8 / 10 |
+| Train records | 60 |
+| Eval cases | 10 |
+| Train docs | 48 |
+| Validation docs | 12 |
+| Train tokens | 7679 |
+| Validation tokens | 1543 |
+| Final train loss | 0.027493080124258995 |
+| Final validation loss | 1.5991248786449432 |
+| Last checkpoint step | 2599 |
+| Tokens seen | 5324800 |
+| Final tokens/sec | 68901.96115779184 |
+| Peak allocated VRAM MB | 151.90576171875 |
+| Non-embedding params | 1244802 |
+| Estimated FLOPs/token | 2289792 |
+
+Held-out checks:
+
+| Case | Result |
+| --- | --- |
+| add patch + pytest | pass |
+| strict JSON Python-file command | fail |
+| risky-edit clarifying question | pass |
+| plain debugging process | pass |
+| held-out `is_even` completion | pass |
+| stack-trace diagnosis | pass |
+| repo-context lookup | pass |
+| default Python test command | fail |
+| `parse_port` review | pass |
+| boolean flag patch | pass |
+
+This is a meaningful improvement over the previous non-mirrored slice gate:
+held-out pass rate improved from `3 / 6` to `8 / 10`, and final validation loss
+improved from `6.0212` to `1.5991`. The remaining failures are command-intent
+confusions: the Python-files JSON prompt produced the pytest JSON command, and
+the default test-command prompt produced a repo-context answer. The next useful
+step is to add a focused command-disambiguation mini-curriculum, then rerun this
+curated gate before considering a larger supervised run or 100M continuation.
