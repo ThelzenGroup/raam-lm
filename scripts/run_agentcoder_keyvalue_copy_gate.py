@@ -93,6 +93,8 @@ def main() -> None:
     parser.add_argument("--train-records", type=int, default=96)
     parser.add_argument("--train-variants-per-row", type=int, default=1)
     parser.add_argument("--eval-cases", type=int, default=64)
+    parser.add_argument("--target-fields", type=int, default=3)
+    parser.add_argument("--distractor-fields", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--min-pass-rate", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=17)
@@ -139,6 +141,10 @@ def main() -> None:
             str(args.train_variants_per_row),
             "--eval-cases",
             str(args.eval_cases),
+            "--target-fields",
+            str(args.target_fields),
+            "--distractor-fields",
+            str(args.distractor_fields),
         ]
     )
     run(
@@ -222,6 +228,8 @@ def main() -> None:
         "train_records": data_payload["train_records"],
         "base_train_rows": data_payload.get("base_train_rows", args.train_records),
         "train_variants_per_row": data_payload.get("train_variants_per_row", args.train_variants_per_row),
+        "target_fields": data_payload.get("target_fields", args.target_fields),
+        "distractor_fields": data_payload.get("distractor_fields", args.distractor_fields),
         "eval_cases": data_payload["eval_cases"],
         "train_tokens": packed_manifest["train_tokens"],
         "val_tokens": packed_manifest["val_tokens"],

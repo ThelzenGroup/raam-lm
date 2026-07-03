@@ -171,6 +171,44 @@ def test_keyvalue_value_only_mode_emits_requested_values_without_keys():
     }
 
 
+def test_keyvalue_value_only_can_target_one_value_for_curriculum():
+    records = build_train_records(
+        seed=17,
+        train_records=4,
+        train_variants_per_row=2,
+        completion_mode="value_only",
+        target_fields=1,
+    )
+    cases = build_eval_cases(
+        seed=17,
+        eval_mode="coverage_ladder",
+        train_records=4,
+        eval_cases=2,
+        completion_mode="value_only",
+        target_fields=1,
+    )
+    first_record = records[0]
+    first_case = cases[0]
+
+    assert len(records) == 8
+    assert all(len(row["target_keys"]) == 1 for row in records)
+    assert all(len(row["target_values"]) == 1 for row in records)
+    assert all(len(row["expected_slots"]) == 1 for row in records)
+    assert all(len(row["target_keys"]) == 1 for row in cases)
+    assert all(len(row["expected_value_sequence"]) == 1 for row in cases)
+    assert first_record["trace"][0]["content"] == first_record["target_values"][0]
+    assert first_case["required_substrings"] == first_case["expected_value_sequence"]
+    assert first_case["enforce_key_sequence"] is False
+    assert first_case["enforce_value_sequence"] is True
+    assert len(first_case["forbidden_substrings"]) == DISTRACTOR_FIELDS + 1
+    assert "=" in first_case["forbidden_substrings"]
+    assert {row["eval_tier"] for row in cases} == {
+        "seen_slot",
+        "covered_value_slot",
+        "heldout_slot",
+    }
+
+
 def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():
     records = build_train_records(seed=17, train_records=TRAIN_RECORDS)
     cases = build_eval_cases(

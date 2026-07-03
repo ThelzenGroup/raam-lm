@@ -64,18 +64,48 @@ def spec(index: int) -> dict[str, Any]:
     return {"index": index, "fields": fields}
 
 
-def spec_with_seen_values(index: int, value_index: int, seed: int) -> dict[str, Any]:
+def spec_with_seen_values(
+    index: int,
+    value_index: int,
+    seed: int,
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
+) -> dict[str, Any]:
     """Use held-out prompt selection with values that appear in train records."""
     train_rng = random.Random(seed + value_index * 17)
-    targets, distractors = choose_fields(spec(value_index), train_rng)
+    targets, distractors = choose_fields(
+        spec(value_index),
+        train_rng,
+        target_fields=target_fields,
+        distractor_fields=distractor_fields,
+    )
     return {"index": index, "value_index": value_index, "fields": [*targets, *distractors]}
 
 
-def choose_fields(row: dict[str, Any], rng: random.Random) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+def validate_field_counts(row: dict[str, Any], target_fields: int, distractor_fields: int) -> None:
+    if target_fields < 1:
+        raise ValueError("target_fields must be positive")
+    if distractor_fields < 0:
+        raise ValueError("distractor_fields must be non-negative")
+    available_fields = len(row["fields"])
+    if target_fields + distractor_fields > available_fields:
+        raise ValueError(
+            "target_fields + distractor_fields must be <= available repo_context field count "
+            f"({available_fields})"
+        )
+
+
+def choose_fields(
+    row: dict[str, Any],
+    rng: random.Random,
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    validate_field_counts(row, target_fields=target_fields, distractor_fields=distractor_fields)
     fields = list(row["fields"])
-    targets = rng.sample(fields, TARGET_FIELDS)
+    targets = rng.sample(fields, target_fields)
     remaining = [field for field in fields if field not in targets]
-    distractors = rng.sample(remaining, DISTRACTOR_FIELDS)
+    distractors = rng.sample(remaining, distractor_fields)
     return targets, distractors
 
 
@@ -145,12 +175,19 @@ def record(
     seed: int,
     variant_index: int = 0,
     completion_mode: str = "keyvalue",
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
 ) -> dict[str, Any]:
     if completion_mode not in COMPLETION_MODES:
         raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     row_index = int(row["index"])
     rng = random.Random(variant_seed(seed, row_index, variant_index))
-    targets, distractors = choose_fields(row, rng)
+    targets, distractors = choose_fields(
+        row,
+        rng,
+        target_fields=target_fields,
+        distractor_fields=distractor_fields,
+    )
     response_instruction = (
         "Return only exact key names, one per line."
         if completion_mode == "key_only"
@@ -191,11 +228,18 @@ def case(
     eval_tier: str,
     seed: int,
     completion_mode: str = "keyvalue",
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
 ) -> dict[str, Any]:
     if completion_mode not in COMPLETION_MODES:
         raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     rng = random.Random(seed + int(row["index"]) * 17)
-    targets, distractors = choose_fields(row, rng)
+    targets, distractors = choose_fields(
+        row,
+        rng,
+        target_fields=target_fields,
+        distractor_fields=distractor_fields,
+    )
     expected_behavior = (
         "copy_key_sequence"
         if completion_mode == "key_only"
@@ -247,6 +291,8 @@ def build_train_records(
     train_records: int = TRAIN_RECORDS,
     train_variants_per_row: int = TRAIN_VARIANTS_PER_ROW,
     completion_mode: str = "keyvalue",
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
 ) -> list[dict[str, Any]]:
     if train_records < 1:
         raise ValueError("train_records must be positive")
@@ -258,7 +304,16 @@ def build_train_records(
     for index in range(train_records):
         row = spec(index)
         for variant_index in range(train_variants_per_row):
-            records.append(record(row, seed=seed, variant_index=variant_index, completion_mode=completion_mode))
+            records.append(
+                record(
+                    row,
+                    seed=seed,
+                    variant_index=variant_index,
+                    completion_mode=completion_mode,
+                    target_fields=target_fields,
+                    distractor_fields=distractor_fields,
+                )
+            )
     return records
 
 
@@ -268,6 +323,8 @@ def build_eval_cases(
     train_records: int = TRAIN_RECORDS,
     eval_cases: int = EVAL_CASES,
     completion_mode: str = "keyvalue",
+    target_fields: int = TARGET_FIELDS,
+    distractor_fields: int = DISTRACTOR_FIELDS,
 ) -> list[dict[str, Any]]:
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"eval_mode must be one of {', '.join(EVAL_MODES)}")
@@ -286,6 +343,8 @@ def build_eval_cases(
                 "seen_slot",
                 seed=seed,
                 completion_mode=completion_mode,
+                target_fields=target_fields,
+                distractor_fields=distractor_fields,
             )
             for index in range(eval_cases)
         )
@@ -293,10 +352,18 @@ def build_eval_cases(
         cases.extend(
             case(
                 f"keyvalue_covered_{index:03d}",
-                spec_with_seen_values(train_records + index, index % train_records, seed=seed),
+                spec_with_seen_values(
+                    train_records + index,
+                    index % train_records,
+                    seed=seed,
+                    target_fields=target_fields,
+                    distractor_fields=distractor_fields,
+                ),
                 "covered_value_slot",
                 seed=seed,
                 completion_mode=completion_mode,
+                target_fields=target_fields,
+                distractor_fields=distractor_fields,
             )
             for index in range(eval_cases)
         )
@@ -308,6 +375,8 @@ def build_eval_cases(
                 "heldout_slot",
                 seed=seed,
                 completion_mode=completion_mode,
+                target_fields=target_fields,
+                distractor_fields=distractor_fields,
             )
             for index in range(eval_cases)
         )
@@ -330,6 +399,8 @@ def main() -> None:
     parser.add_argument("--train-records", type=int, default=TRAIN_RECORDS)
     parser.add_argument("--train-variants-per-row", type=int, default=TRAIN_VARIANTS_PER_ROW)
     parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
+    parser.add_argument("--target-fields", type=int, default=TARGET_FIELDS)
+    parser.add_argument("--distractor-fields", type=int, default=DISTRACTOR_FIELDS)
     args = parser.parse_args()
 
     train_records = build_train_records(
@@ -337,6 +408,8 @@ def main() -> None:
         train_records=args.train_records,
         train_variants_per_row=args.train_variants_per_row,
         completion_mode=args.completion_mode,
+        target_fields=args.target_fields,
+        distractor_fields=args.distractor_fields,
     )
     eval_cases = build_eval_cases(
         seed=args.seed,
@@ -344,6 +417,8 @@ def main() -> None:
         train_records=args.train_records,
         eval_cases=args.eval_cases,
         completion_mode=args.completion_mode,
+        target_fields=args.target_fields,
+        distractor_fields=args.distractor_fields,
     )
     train_path = Path(args.train_output)
     cases_path = Path(args.cases_output)
@@ -374,8 +449,8 @@ def main() -> None:
         "base_train_rows": args.train_records,
         "train_variants_per_row": args.train_variants_per_row,
         "requested_eval_cases": args.eval_cases,
-        "target_fields": TARGET_FIELDS,
-        "distractor_fields": DISTRACTOR_FIELDS,
+        "target_fields": args.target_fields,
+        "distractor_fields": args.distractor_fields,
         "available_keys": KEYS,
         "value_formats": VALUE_FORMATS,
         "behavior_counts": dict(sorted(behavior_counts.items())),
