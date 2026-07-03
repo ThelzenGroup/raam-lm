@@ -517,3 +517,70 @@ compression-only Stage 5 setup with reconstruction and MTP disabled, but changes
 the optimizer schedule to `lr: 0.0001` and `warmup_steps: 500` so the LR is capped
 near the previous run's best-validation region instead of continuing to rise past
 step 500.
+
+## Stage 5 Capped-LR Gate
+
+Pushed `1c6d0db` with
+`configs/scratch/raam_agentcoder_100m_stage5_lr1e4.yaml`, then ran a bounded Vast
+RTX 5090 gate on the existing expanded Stage 5 packed corpus:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr1e4_gate_20260703T005205Z/train \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr1e4.yaml \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_lr1e4_gate_20260703T005205Z`.
+The pull is about 1.9 MB and contains no `.pt` files. Both Vast RTX 5090
+instances were stopped/exited after the pull.
+
+Capped-LR gate metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Last logged step | 1099 |
+| Tokens seen | 72089600 |
+| First validation loss | 10.387824440002442 |
+| Best validation loss | 3.0503190875053408 at step 500 |
+| Final validation loss | 3.337503743171692 |
+| Final train loss | 2.9091925621032715 |
+| Final tokens/sec | 227739.13384071097 |
+| Peak allocated VRAM MB | 12630.3056640625 |
+| Non-embedding params | 67080706 |
+| Estimated FLOPs/token | 151132672 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 0 | 10.387824440002442 |
+| 100 | 6.776480412483215 |
+| 200 | 5.214842581748963 |
+| 300 | 3.9693182826042177 |
+| 400 | 3.3113513946533204 |
+| 500 | 3.0503190875053408 |
+| 600 | 3.143168342113495 |
+| 700 | 3.2386062860488893 |
+| 800 | 3.2452985048294067 |
+| 900 | 3.2523025393486025 |
+| 999 | 3.344883382320404 |
+| 1000 | 3.318834912776947 |
+| 1099 | 3.337503743171692 |
+
+Interpretation: capping LR at `1e-4` materially improves the final Stage 5 gate
+versus the previous stable config (`3.3375` final validation instead of `4.5944`)
+and improves the best point (`3.0503` instead of `3.1310`). It still peaks at
+step 500 and drifts upward afterward, so the model is still not ready for a full
+training spend. The next decision is either to export/check around the current
+best region or run one more lower-LR gate (`5e-5` or `7.5e-5`) to test whether the
+validation curve can keep improving beyond 500 steps.

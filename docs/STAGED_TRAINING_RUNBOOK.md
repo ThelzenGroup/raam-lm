@@ -222,6 +222,12 @@ EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
+The `lr1e4` gate improved the final validation loss versus the stable schedule,
+but still peaked at step 500. Treat it as the current best Stage 5 schedule, not
+as full-training clearance. For a longer paid run, either export around the
+500-step best region first or run one more lower-LR gate (`5e-5` or `7.5e-5`) to
+see whether validation can keep improving past 500 steps.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

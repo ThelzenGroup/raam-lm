@@ -67,6 +67,14 @@ The first capped-LR candidate is
 and disabled auxiliary-loss setup as the stable gate, but with `lr: 0.0001` and
 `warmup_steps: 500`.
 
+Capped-LR gate evidence: `raam_agentcoder_100m_stage5_lr1e4` improved the final
+validation loss materially versus the stable config (`3.3375` versus `4.5944` at
+step 1099), and had a better best point (`3.0503` at step 500 versus `3.1310`).
+It still peaked at step 500 and drifted upward afterward, so the next gate should
+test an even safer continuation policy: shorter `500 -> 600` checkpoint export for
+the current best region, or a lower `5e-5`/`7.5e-5` LR gate if training beyond
+500 steps is required.
+
 ## Ablations
 
 - No compression.
