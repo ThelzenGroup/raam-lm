@@ -102,6 +102,11 @@ nearby training example. Those failures are reported as `slot_error` when the
 behavior family is correct but required text is missing or forbidden text is
 present.
 
+Repo-lookup training records include distractor files with familiar definitions
+such as `add`, `slugify`, and `parse_port`. The model must bind the requested
+symbol to the matching `def` line instead of replaying a frequent symbol/file
+pair from another training example.
+
 Boolean-flag patch cases are intentionally shaped differently from arithmetic
 bug-fix patches. They name themselves as boolean flag repair, avoid focused
 pytest-command language, and require the exact file/helper/enabled-literal

@@ -352,27 +352,85 @@ def build_train_records() -> list[dict[str, Any]]:
                 )
             )
 
+    common_repo_decoys = [
+        ("calc.py", "def add(a, b):\n    return a + b"),
+        ("names.py", "def slugify(text):\n    return text.lower().replace(' ', '-')"),
+        ("config.py", "def parse_port(value):\n    return int(value)"),
+    ]
     repo_variants = [
-        ("slugify", "main.py", "from names import slugify\nprint(slugify('Hello World'))", "names.py", "def slugify(text):\n    return text.lower().replace(' ', '-')"),
-        ("add", "app.py", "from calc import add\nprint(add(2, 3))", "calc.py", "def add(a, b):\n    return a + b"),
-        ("parse_port", "server.py", "from config import parse_port\nPORT = parse_port('8080')", "config.py", "def parse_port(value):\n    return int(value)"),
-        ("load_settings", "cli.py", "from settings import load_settings", "settings.py", "def load_settings(path):\n    return {'path': path}"),
-        ("validate_email", "web.py", "from validators import validate_email", "validators.py", "def validate_email(value):\n    return '@' in value"),
-        ("render_invoice", "routes.py", "from invoices import render_invoice", "invoices.py", "def render_invoice(invoice):\n    return str(invoice)"),
-        ("build_parser", "main.py", "from cli_parser import build_parser", "cli_parser.py", "def build_parser():\n    return object()"),
-        ("save_user", "views.py", "from storage import save_user", "storage.py", "def save_user(user):\n    return user['id']"),
+        (
+            "format_title",
+            "blog.py",
+            "from title_tools import format_title\nprint(format_title('hello world'))",
+            "title_tools.py",
+            "def format_title(text):\n    return text.strip().title()",
+        ),
+        (
+            "clean_heading",
+            "posts.py",
+            "from headings import clean_heading\nprint(clean_heading(' Intro '))",
+            "headings.py",
+            "def clean_heading(text):\n    return text.strip().capitalize()",
+        ),
+        (
+            "normalize_path",
+            "cli.py",
+            "from paths import normalize_path\nprint(normalize_path('./src'))",
+            "paths.py",
+            "def normalize_path(value):\n    return value.strip().rstrip('/')",
+        ),
+        (
+            "load_settings",
+            "settings_cli.py",
+            "from settings import load_settings\nSETTINGS = load_settings('config.yaml')",
+            "settings.py",
+            "def load_settings(path):\n    return {'path': path}",
+        ),
+        (
+            "validate_email",
+            "web.py",
+            "from validators import validate_email\nVALID = validate_email('a@example.com')",
+            "validators.py",
+            "def validate_email(value):\n    return '@' in value",
+        ),
+        (
+            "render_invoice",
+            "routes.py",
+            "from invoices import render_invoice\nBODY = render_invoice({'id': 7})",
+            "invoices.py",
+            "def render_invoice(invoice):\n    return str(invoice)",
+        ),
+        (
+            "build_parser",
+            "main.py",
+            "from cli_parser import build_parser\nPARSER = build_parser()",
+            "cli_parser.py",
+            "def build_parser():\n    return object()",
+        ),
+        (
+            "save_user",
+            "views.py",
+            "from storage import save_user\nUSER_ID = save_user({'id': 3})",
+            "storage.py",
+            "def save_user(user):\n    return user['id']",
+        ),
     ]
     for func, import_file, import_code, impl_file, impl_code in repo_variants:
-        repo = f"file: {import_file}\n```python\n{import_code}\n```\nfile: {impl_file}\n```python\n{impl_code}\n```"
+        files = [(import_file, import_code), (impl_file, impl_code)]
+        files.extend((path, code) for path, code in common_repo_decoys if path != impl_file)
+        repo = "\n".join(f"file: {path}\n```python\n{code}\n```" for path, code in files)
         records.append(
             record(
                 "repo_context_lookup",
-                f"Repo lookup task. Requested symbol: {func}. Which file defines that exact symbol?",
+                (
+                    f"Repo lookup task. Requested symbol: {func}. "
+                    f"Find `def {func}` and ignore unrelated definitions such as add, slugify, or parse_port."
+                ),
                 f"{func} is implemented in {impl_file}. That file contains def {func}.",
                 f"The implementation is in {impl_file}.",
                 system_suffix=(
                     "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
-                    "Do not substitute another symbol from the context or training examples."
+                    "Find the matching def line and do not substitute another symbol from the context or training examples."
                 ),
                 repo_context=repo,
             )
@@ -532,9 +590,9 @@ def build_eval_cases() -> list[dict[str, Any]]:
             chat_prompt(
                 (
                     "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
-                    "Do not substitute another symbol from the context or training examples."
+                    "Find the matching def line and do not substitute another symbol from the context or training examples."
                 ),
-                "Repo lookup task. Requested symbol: normalize_title. Which file defines that exact symbol?",
+                "Repo lookup task. Requested symbol: normalize_title. Find `def normalize_title` and ignore unrelated definitions such as add, slugify, or parse_port.",
                 "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
             ["normalize_title is implemented in titles.py"],
@@ -618,8 +676,8 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v5",
-        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics and patch-family separation; not a benchmark dataset.",
+        "format": "agentcoder-curated-sft-v6",
+        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics, patch-family separation, and repo lookup distractors; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, indent=2, sort_keys=True))
