@@ -255,6 +255,7 @@ class CausalCopyHead(nn.Module):
             int(token_id) for token_id in self.config.request_key_follow_query_ignore_token_ids
         ]
         prompt_suffix_tokens = max(0, int(self.config.request_key_follow_prompt_suffix_tokens))
+        prefix_tokens = max(1, int(self.config.request_key_follow_prefix_tokens))
         if request_after_token_id < 0 or request_before_token_id < 0:
             return None
 
@@ -366,6 +367,22 @@ class CausalCopyHead(nn.Module):
             continuation_target_valid = positions.unsqueeze(0) > (
                 last_request_before + prompt_suffix_tokens
             )
+            for prefix_offset in range(1, prefix_tokens):
+                target_prefix_pos = (positions - prefix_offset).clamp_min(0)
+                source_prefix_pos = (positions - 1 - prefix_offset).clamp_min(0)
+                target_prefix_active = (positions.unsqueeze(0) - prefix_offset) > (
+                    last_request_before + prompt_suffix_tokens
+                )
+                source_prefix_valid = positions > (prefix_offset + 1)
+                target_prefix_ids = input_ids[:, target_prefix_pos]
+                source_prefix_ids = input_ids[:, source_prefix_pos]
+                prefix_matches = prefix_matches & (
+                    ~target_prefix_active[:, :, None]
+                    | (
+                        source_prefix_valid[None, None, :]
+                        & (target_prefix_ids[:, :, None] == source_prefix_ids[:, None, :])
+                    )
+                )
             continuation_follow = continuation_follow + request_match * (
                 prefix_matches & source_prev_valid[None, None, :] & continuation_target_valid[:, :, None]
             ).to(dtype=continuation_follow.dtype)

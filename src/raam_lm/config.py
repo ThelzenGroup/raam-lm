@@ -85,6 +85,7 @@ class CopyHeadConfig:
     request_key_follow_query_before_token_ids: list[int] = field(default_factory=list)
     request_key_follow_query_ignore_token_ids: list[int] = field(default_factory=list)
     request_key_follow_prompt_suffix_tokens: int = 0
+    request_key_follow_prefix_tokens: int = 1
 
 
 @dataclass

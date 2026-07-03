@@ -291,6 +291,39 @@ def test_causal_copy_head_request_key_follow_does_not_cross_stop_tokens():
     assert continuation[0, 17, 5] == 0
 
 
+def test_causal_copy_head_request_key_follow_matches_generated_prefix():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        key_follow_stop_token_ids=[10],
+        request_key_follow_strength=10.0,
+        request_key_follow_continuation_strength=20.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=12,
+        request_key_follow_query_after_token_id=8,
+        request_key_follow_query_before_token_ids=[9],
+        request_key_follow_prompt_suffix_tokens=1,
+        request_key_follow_prefix_tokens=4,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    input_ids = torch.tensor(
+        [[31, 7, 7, 201, 202, 203, 99, 202, 204, 10, 5, 99, 8, 31, 9, 6, 10, 201, 202]]
+    )
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, continuation = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert continuation[0, 18, 5] > 0
+    assert continuation[0, 18, 8] == 0
+
+
 def test_causal_copy_head_request_key_follow_eval_only_skips_train_route():
     config = CopyHeadConfig(
         enabled=True,
