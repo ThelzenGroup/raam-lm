@@ -2460,6 +2460,154 @@ twice the steps. The next architecture step should keep learned/content-aware
 anchors in play and add a stronger slot-alignment signal or hybrid anchor prior,
 not switch wholesale to token-ID anchors before full chat/coding training.
 
+## AgentCoder RAAM Hybrid Anchor Cardinality Ablation
+
+Added a hybrid anchor selector and two diagnostic configs:
+
+- `CompressionConfig.token_id_anchor_count`
+- `DynamicHourglassCompressor` support for
+  `anchor_selection: hybrid_token_id_learned`
+- `configs/scratch/raam_agentcoder_atomic_hybrid_anchor_attention_gate.yaml`
+  reserves `2` token-ID anchors and fills `2` learned anchors
+- `configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml`
+  reserves `1` token-ID anchor and fills `3` learned anchors
+- `docs/AGENTIC_CODING_EVALS.md` documents both hybrid sweeps
+- `tests/test_anchor_selection.py` covers hybrid reservation, missing
+  `input_ids`, and invalid `token_id_anchor_count`
+- `tests/test_agentcoder_atomic_cardinality_sweep.py` covers both hybrid configs
+
+The goal was to keep the strong learned/content route while giving at least one
+fixed slot per block to high-ID rare/code-like tokens. This directly followed
+the token-ID-only result: rare-token preservation helped but replacing all
+learned anchors was too costly.
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/compression.py src/raam_lm/model.py scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_hybrid_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    comp = data['compression']
+    print(path, comp.get('anchor_selection', 'learned_topk'), comp.get('token_id_anchor_count', 0), comp['block_size'], comp['anchors_per_block'], data['attention_island_layers'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed before the first hybrid commit:
+  `18 passed in 0.11s`
+- focused local tests passed after adding the one-token hybrid config:
+  `19 passed in 0.10s`
+- config parse confirmed the hybrid configs use the same `4`-anchor budget with
+  distinct `token_id_anchor_count` values
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_anchor_selection.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_hybrid_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_hybrid_anchor_attention_20260703T074802Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_anchor_selection.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_hybrid1_anchor_attention_20260703T075520Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_n64_steps2400_20260703T080111Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests after first hybrid config: `26 passed in 1.67s`
+- focused remote tests after one-token hybrid config: `27 passed in 1.65s`
+- full remote test suite passed after the runs: `63 passed in 33.36s`
+- eval policy: mirrored eval with eval cases matched to train-record count,
+  except the focused run used fixed `64` eval cases
+- `mirror_val: true`
+
+Two-token hybrid sweep at the default `1200` training steps:
+
+| Bindings | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 4 | 4 / 4 | 0.029026 | 921600 |
+| 8 | 8 / 8 | 0.041702 | 921600 |
+| 16 | 16 / 16 | 0.045974 | 921600 |
+| 32 | 31 / 32 | 0.050310 | 921600 |
+| 64 | 33 / 64 | 0.090650 | 921600 |
+
+One-token hybrid sweep at the default `1200` training steps:
+
+| Bindings | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 4 | 4 / 4 | 0.029151 | 921600 |
+| 8 | 8 / 8 | 0.045266 | 921600 |
+| 16 | 15 / 16 | 0.046210 | 921600 |
+| 32 | 32 / 32 | 0.057599 | 921600 |
+| 64 | 59 / 64 | 0.077860 | 921600 |
+
+Focused one-token hybrid `64`-binding longer-training probe:
+
+| Steps | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 1200 | 59 / 64 | 0.077860 | 921600 |
+| 2400 | 64 / 64 | 0.062354 | 1843200 |
+
+Representative failures:
+
+- two-token hybrid `n=64` only reached `33 / 64`, so reserving two high-ID
+  anchors appears to disrupt the learned/content route too much.
+- one-token hybrid default `n=16` missed only `atomic_mirror_015`.
+- one-token hybrid default `n=64` missed five cases:
+  `atomic_mirror_006`, `029`, `032`, `039`, and `057`.
+- one-token hybrid `n=64` at `2400` steps had no slot-copy failures.
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_hybrid_anchor_attention_20260703T074802Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_hybrid1_anchor_attention_20260703T075520Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_n64_steps2400_20260703T080111Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: the one-token hybrid is the best efficient partial-anchor route
+so far. It slightly improves the high-cardinality default-step result over the
+learned 4-anchor route (`59 / 64` versus `57 / 64`) and closes the `64 / 64`
+atomic exact-binding gate at `2400` steps without preserving every token. This
+does not yet justify broad chat/coding training: it is one mirrored synthetic
+gate, one seed, and one tiny model size. The next useful gate is repeatability:
+rerun the one-token hybrid and the learned 4-anchor route across multiple seeds,
+then test a harder held-out/decoy slot-copy gate before starting any broad
+agentic coding pretraining.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
