@@ -2760,6 +2760,127 @@ on span/value generalization rather than key selection: either add explicit
 value-boundary sentinels plus a one-value-to-three-value curriculum, or add a
 copy/span pointer head and compare it against the current copy-head-only path.
 
+## AgentCoder Value-Boundary One-Value Gate
+
+Added an optional value-boundary sentinel format for the value-only key-value
+gate. With `--value-boundaries`, repo-context values and assistant outputs are
+wrapped as `<value>...</value>`, while eval still compares the plain underlying
+value sequence. This tested whether explicit span boundaries help value copying
+without changing model architecture.
+
+Changed files:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `scripts/eval_overfit_sanity.py`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+
+Commits:
+
+- `aa766c6 Add value boundary sentinel gate option`
+- `ae964ba Fix eval script root import path`
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py scripts/eval_overfit_sanity.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+rm -rf work/valueboundary_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/valueboundary_smoke/train.jsonl --cases-output work/valueboundary_smoke/cases.json --manifest-output work/valueboundary_smoke/manifest.json --completion-mode value_only --value-boundaries --eval-mode coverage_ladder --train-records 12 --train-variants-per-row 3 --eval-cases 4 --target-fields 1
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+python3 scripts/run_agentcoder_keyvalue_copy_gate.py --help | grep -E 'value-boundaries|target-fields|value_only'
+git diff --check
+```
+
+Results:
+
+- focused key-value generator tests: `12 passed`
+- related generator bundle: `42 passed`
+- boundary smoke manifest: 12 base train rows, 3 variants per row, 36 train
+  records, `target_fields: 1`, `value_boundaries: true`, and 12 eval cases split
+  evenly across `seen_slot`, `covered_value_slot`, and `heldout_slot`
+- runner help exposes `--value-boundaries`
+- `git diff --check` passed
+
+Remote Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python - <<'PY'
+from scripts.eval_overfit_sanity import generated_value_sequence
+assert generated_value_sequence("<value>copy_service_000</value>\n<eos>") == ["copy_service_000"]
+PY
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueboundary_onefield_compare_20260703T115728Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --value-boundaries --max-new-tokens 32 --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueboundary_onefield_compare_20260703T115728Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --value-boundaries --max-new-tokens 32 --clean --no-fail
+```
+
+Remote focused tests: `29 passed, 8 deselected`; boundary eval parse check
+passed.
+
+One failed command was hit after RAAM training completed: running
+`scripts/eval_overfit_sanity.py` as a script could not import
+`scripts.make_agentcoder_keyvalue_copy_sft` because the repo root was not on
+`sys.path`. `ae964ba` fixed the script root import path. RAAM was then rescored
+from the existing checkpoint and its `summary.json` was recovered from the eval,
+data, packed, and train manifests.
+
+Value-boundary one-value coverage ladder results:
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out/OOV Pass | Value Sequence Accuracy | Behavior Accuracy | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM value-boundary one-value | 27 / 96 | 22 / 32 | 5 / 32 | 0 / 32 | 27 / 96 | 96 / 96 | 0.418680 | 25920.3 |
+| Transformer value-boundary one-value | 17 / 96 | 14 / 32 | 3 / 32 | 0 / 32 | 17 / 96 | 96 / 96 | 0.417798 | 28305.5 |
+
+Representative completions:
+
+- RAAM seen pass: expected `disabled_file_001`; generated
+  `<value>disabled_file_001</value>`.
+- RAAM seen fail: expected `copy_service_000`; generated
+  `<value>copy_file_000.py</value>`.
+- RAAM covered-value pass: expected `copy_adapter_002.py`; generated
+  `<value>copy_adapter_002.py</value>`.
+- RAAM held-out/OOV fail: expected `case_adapter_096`; generated
+  `<value>c</value>`.
+- Transformer seen pass: expected `disabled_file_001`; generated
+  `<value>disabled_file_001</value>`.
+- Transformer seen fail: expected `copy_service_000`; generated
+  `<value>copy_fixture_000.py</value>`.
+- Transformer held-out/OOV fail: expected `case_adapter_096`; generated
+  `<value>py</value>`.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_valueboundary_onefield_compare_20260703T115728Z`
+
+Checkpoint weights were not pulled. After artifact pull, the remote RAAM and
+Transformer `last.pt` files for this run were deleted, and both Vast RTX 5090
+instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
+
+Interpretation: value-boundary sentinels made the wrapper format easy to learn,
+but hurt exact value retrieval relative to the unwrapped one-value gate
+(`RAAM 27/96` vs `32/96`, Transformer `17/96` vs `35/96`) and still produced
+`0/32` held-out/OOV passes. This falsifies the simple boundary-token hypothesis
+for the current tiny setup. The next useful direction is model-side copying:
+add a value-query/pointer route that can use requested keys before the assistant
+boundary, or relax the existing key-follow copy head so value-only prompts can
+copy from the requested key instead of relying only on generated keys.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
