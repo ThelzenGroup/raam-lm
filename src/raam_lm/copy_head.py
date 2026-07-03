@@ -276,9 +276,11 @@ class CausalCopyHead(nn.Module):
             )
             last_source_after = torch.cummax(source_after_positions, dim=1).values
             source_region = source_region & (positions[None, None, :] > last_source_after[:, :, None])
-        source_not_stopped = torch.ones(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+        source_stop_mask = torch.zeros(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
         for token_id in stop_token_ids:
-            source_not_stopped = source_not_stopped & (input_ids != token_id)
+            source_stop_mask = source_stop_mask | (input_ids == token_id)
+        source_not_stopped = ~source_stop_mask
+        source_stop_prefix = source_stop_mask.to(dtype=torch.int64).cumsum(dim=1)
 
         request_after_positions = torch.where(
             input_ids == request_after_token_id,
@@ -342,12 +344,15 @@ class CausalCopyHead(nn.Module):
             key_valid = key_pos >= 0
             clipped_key_pos = key_pos.clamp(0, seq_len - 1)
             key_ids = input_ids[:, clipped_key_pos]
+            key_stop_count = source_stop_prefix[:, clipped_key_pos]
+            same_value_segment = source_stop_prefix[:, None, :] == key_stop_count[:, None, :]
             matches = request_ids[:, None, :, None] == key_ids[:, None, None, :]
             valid = (
                 request_valid[:, :, :, None]
                 & key_valid[None, None, None, :]
                 & source_region[:, :, None, :]
                 & source_not_stopped[:, None, None, :]
+                & same_value_segment[:, :, None, :]
             )
             request_match = (matches & valid).to(dtype=first_follow.dtype).sum(dim=2)
             if value_index == 0:
