@@ -2043,6 +2043,132 @@ multiple key names, multiple value offsets/formats, repo-context distractors,
 held-out keys/values, and then compare RAAM key-follow against the Transformer
 copy-head baseline under the same gate.
 
+## Key-Value Copy Ladder
+
+Added a broader key-value copy gate to stress the key-follow route beyond the
+atomic `symbol`/`file` pair. The new gate asks the model to copy three requested
+`key=value` lines from a repo-context table containing seven `key: value` lines:
+three targets and four distractors.
+
+Added:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml`
+- `configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+
+The generator covers:
+
+- keys: `symbol`, `file`, `helper`, `module`, `route`, `fixture`, `setting`,
+  `adapter`, `service`, `endpoint`, `task`, `parser`
+- value formats: identifier-like strings, `.py` filenames, flag-like strings,
+  and case-id strings
+- seen and held-out eval tiers
+- forbidden `key=value` strings for distractor fields
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py scripts/eval_overfit_sanity.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+rm -rf work/keyvalue_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/keyvalue_smoke/train.jsonl --cases-output work/keyvalue_smoke/cases.json --manifest-output work/keyvalue_smoke/manifest.json --eval-mode ladder --train-records 12 --eval-cases 8
+python3 scripts/estimate_flops.py --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml
+python3 scripts/estimate_flops.py --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused local tests passed: `36 passed in 0.24s`
+- smoke manifest emitted `12` train records and `16` eval cases
+- key-value RAAM config FLOPs/token estimate after aligned key-follow:
+  `2788608`
+- key-value Transformer config FLOPs/token estimate after aligned key-follow:
+  `3381376`
+- `git diff --check` passed
+
+Implementation fixes prompted by the gate:
+
+- Fixed seen-tier generation so seen eval cases reuse the exact trained slot
+  tuples rather than only the same record index.
+- Extended `infer_behavior` to classify all new key names as
+  `copy_slot_values`.
+- Added aligned key-follow mode so a generated `key=<partial value>` can copy
+  the corresponding later token from `key: <value>` in source context.
+- Added an assistant-output guard so key-follow does not trigger from
+  instructional text such as `key=value lines` in the user prompt.
+
+Vast RTX 5090 comparison:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_key_follow_compare_20260703T100438Z/raam \
+  --device cuda --seed 29 --train-records 96 --eval-cases 32 \
+  --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode ladder --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_key_follow_compare_20260703T100438Z/transformer \
+  --device cuda --seed 29 --train-records 96 --eval-cases 32 \
+  --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode ladder --clean --no-fail
+```
+
+Remote results before aligned/OOV fixes:
+
+- focused remote tests: `20 passed, 8 deselected`
+
+| Model | Exact Pass | Seen Pass | Held-Out Pass | Behavior Accuracy | Val Loss | Tokens/sec | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM key-value key-follow | 29 / 64 | 29 / 32 | 0 / 32 | 64 / 64 | 0.122228 | 26101.1 | 2141440 |
+| Transformer key-value key-follow | 32 / 64 | 32 / 32 | 0 / 32 | 64 / 64 | 0.060538 | 28913.9 | 2734208 |
+
+Held-out failures were not RAAM-specific. Both models preserved the requested
+behavior but failed all held-out exact values. Representative held-out
+completions copied only value prefixes such as `c`, `h`, or fragments from seen
+training rows.
+
+Aligned key-follow eval-only diagnostic on the same checkpoints:
+
+- Remote tests for aligned key-follow: `9 passed, 9 deselected`
+- RAAM aligned eval-only: `4 / 64`
+- Transformer aligned eval-only: `4 / 64`
+
+This was worse because the aligned route fired from prompt text before the
+assistant answer began.
+
+Assistant-guarded aligned key-follow eval-only diagnostic on the same
+checkpoints:
+
+- Remote tests for guarded key-follow: `10 passed, 9 deselected`
+- RAAM guarded aligned eval-only: `29 / 64`
+- Transformer guarded aligned eval-only: `32 / 64`
+
+The guard restored the original comparison result but did not solve held-out
+exact copying. The remaining failures are byte/OOV value copying failures caused
+by training the tiny tokenizer only on training JSONL: held-out values such as
+`copy_file_096.py` are split into byte-fallback or partial tokens, and the
+current model/copy route does not yet reliably generate the full byte-token
+sequence.
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_keyvalue_key_follow_compare_20260703T100438Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_keyvalue_aligned_eval_only_20260703T101030Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_keyvalue_aligned_guard_eval_only_20260703T101319Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: key-follow cleared the atomic in-vocabulary `symbol`/`file`
+mirror gate, but the broader key-value ladder falsifies the idea that it is
+already enough for agentic coding. The next useful step is an OOV-aware copy
+diagnostic: either train/evaluate with a tokenizer coverage split that separates
+slot-binding from byte-generation, or add a true sequential span-copy route that
+can copy byte-fallback values from the current context without relying on the
+value being a learned whole token.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
