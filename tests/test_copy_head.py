@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import pytest
 
 from raam_lm.config import CopyHeadConfig, ModelConfig
 from raam_lm.copy_head import CausalCopyHead
@@ -66,6 +67,28 @@ def test_causal_copy_head_backward_is_finite_with_lower_precision_logits():
     loss = out[:, :-1].float().mean()
     loss.backward()
 
+    assert torch.isfinite(hidden.grad).all()
+    assert torch.isfinite(head.query.weight.grad).all()
+    assert torch.isfinite(head.key.weight.grad).all()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA autocast regression requires CUDA")
+def test_causal_copy_head_cuda_autocast_backward_is_finite():
+    config = CopyHeadConfig(enabled=True, d_copy=8, logit_scale=4.0)
+    head = CausalCopyHead(d_model=8, vocab_size=32, config=config).cuda()
+    hidden = torch.randn(2, 8, 8, device="cuda", requires_grad=True)
+    input_ids = torch.tensor(
+        [[3, 5, 5, 9, 4, 8, 7, 1], [2, 7, 7, 1, 6, 3, 9, 4]],
+        device="cuda",
+    )
+    lm_logits = torch.randn(2, 8, 32, device="cuda", requires_grad=True)
+
+    with torch.autocast(device_type="cuda"):
+        out = head(hidden, input_ids, lm_logits)
+        loss = out[:, :-1].mean()
+    loss.backward()
+
+    assert out.dtype == torch.float32
     assert torch.isfinite(hidden.grad).all()
     assert torch.isfinite(head.query.weight.grad).all()
     assert torch.isfinite(head.key.weight.grad).all()
