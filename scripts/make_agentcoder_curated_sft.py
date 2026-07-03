@@ -105,13 +105,22 @@ def build_train_records() -> list[dict[str, Any]]:
         ("totals.py", "def combine(x, y):\n    return x - y", "def combine(x, y):\n    return x + y", "tests/test_totals.py"),
     ]
     add_prompts = [
-        "Patch task, not just a test-command question. The helper fails because it subtracts. Provide a minimal diff and then a focused test command.",
-        "Patch task: a test expected addition but the function returns subtraction. Emit the diff first, then name the focused pytest command.",
-        "Fix this arithmetic bug with a tiny diff first, then say which focused test to run.",
+        "Patch task for `{path}`. Copy the shown `{helper}` function from repo_context, change `return {old_return}` to `return {new_return}`, emit the diff first, then name the focused pytest command.",
+        "Patch task, not just a test-command question. In `{path}`, fix `{helper}` by changing `return {old_return}` to `return {new_return}`. Diff first, test command second.",
+        "Fix the shown `{helper}` arithmetic bug in `{path}` with a tiny diff first, then say which focused test to run.",
     ]
     for idx, (path, before, after, test_path) in enumerate(add_variants):
         repo = f"file: {path}\n```python\n{before}\n```"
-        for prompt in add_prompts:
+        helper = before.split("(", 1)[0].replace("def ", "")
+        old_return = before.splitlines()[-1].strip().removeprefix("return ")
+        new_return = after.splitlines()[-1].strip().removeprefix("return ")
+        for prompt_template in add_prompts:
+            prompt = prompt_template.format(
+                path=path,
+                helper=helper,
+                old_return=old_return,
+                new_return=new_return,
+            )
             assistant = (
                 patch_text(path, before, after, "The bug is subtraction where addition is required.")
                 + f"\nTest command: `pytest {test_path} -q`"
@@ -122,7 +131,10 @@ def build_train_records() -> list[dict[str, Any]]:
                     prompt,
                     assistant,
                     f"Patched {path} and verified with pytest {test_path} -q.",
-                    system_suffix="Preserve exact patches and include a focused test command.",
+                    system_suffix=(
+                        "Preserve exact patches and include a focused test command. "
+                        "Copy the file path, function name, and return expression from repo_context; do not reuse another patch example."
+                    ),
                     repo_context=repo,
                 )
             )
@@ -424,7 +436,8 @@ def build_train_records() -> list[dict[str, Any]]:
                 "repo_context_lookup",
                 (
                     f"Repo lookup task. Requested symbol: {func}. "
-                    f"Read repo_context. Find `def {func}` and ignore unrelated definitions such as add, slugify, or parse_port."
+                    f"Read repo_context. Find `def {func}` and ignore unrelated definitions such as add, slugify, or parse_port. "
+                    f"Start the answer with the exact requested symbol `{func}`."
                 ),
                 f"{func} is implemented in {impl_file}. That file contains def {func}.",
                 f"The implementation is in {impl_file}.",
@@ -540,12 +553,16 @@ def build_eval_cases() -> list[dict[str, Any]]:
         case(
             "curated_add_patch",
             chat_prompt(
-                "Preserve exact patches and include a focused test command.",
-                "Patch task, not just a test-command question. Fix add with a diff first, then name the focused test command.",
+                (
+                    "Preserve exact patches and include a focused test command. "
+                    "Copy the file path, function name, and return expression from repo_context; do not reuse another patch example."
+                ),
+                "Patch task for `calc.py`. Copy the shown `add` function from repo_context, change `return a - b` to `return a + b`, emit the diff first, then name the focused test command.",
                 "file: calc.py\n```python\ndef add(a, b):\n    return a - b\n```",
             ),
             ["return a + b", "pytest"],
             expected_behavior="patch_addition",
+            forbidden_substrings=["arithmetic.py", "sum_values", "mathlib.py", "totals.py"],
         ),
         case(
             "curated_json_python_files",
@@ -592,7 +609,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
                     "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
                     "Read the repo_context, find the matching def line, and do not substitute another symbol from the context or training examples."
                 ),
-                "Repo lookup task. Requested symbol: normalize_title. Read repo_context. Find `def normalize_title` and ignore unrelated definitions such as add, slugify, or parse_port.",
+                "Repo lookup task. Requested symbol: normalize_title. Read repo_context. Find `def normalize_title` and ignore unrelated definitions such as add, slugify, or parse_port. Start the answer with the exact requested symbol `normalize_title`.",
                 "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
             ["normalize_title is implemented in titles.py"],
@@ -676,8 +693,8 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v7",
-        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics, patch/test-command separation, and repo lookup distractors; not a benchmark dataset.",
+        "format": "agentcoder-curated-sft-v8",
+        "note": "Deterministic synthetic supervision for gate testing with explicit slot-copy diagnostics, patch/test-command separation, and repo lookup distractors; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, indent=2, sort_keys=True))

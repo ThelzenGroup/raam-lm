@@ -163,8 +163,12 @@ def test_curated_sft_generator_has_behavior_coverage():
     assert all("expected_behavior" in row for row in cases)
     case_by_name = {row["name"]: row for row in cases}
     assert "diff first" in case_by_name["curated_add_patch"]["prompt"]
+    assert {"arithmetic.py", "sum_values", "mathlib.py", "totals.py"}.issubset(
+        set(case_by_name["curated_add_patch"]["forbidden_substrings"])
+    )
     assert "Do not write code" in case_by_name["curated_debugging"]["prompt"]
     assert "Find `def normalize_title`" in case_by_name["curated_repo_lookup"]["prompt"]
+    assert "Start the answer with the exact requested symbol `normalize_title`" in case_by_name["curated_repo_lookup"]["prompt"]
     assert "normalize_title is implemented in titles.py" in case_by_name["curated_repo_lookup"]["required_substrings"]
     assert {"slugify", "names.py", "calc.py", "render_invoice", "invoices.py"}.issubset(
         set(case_by_name["curated_repo_lookup"]["forbidden_substrings"])
@@ -177,6 +181,9 @@ def test_curated_sft_generator_has_behavior_coverage():
     assert all("title_tools.py" not in row["trace"][0]["content"] for row in repo_records)
     assert any("normalize_slug is implemented in slugs.py" in row["trace"][0]["content"] for row in repo_records)
     assert all("add is implemented in calc.py" not in row["trace"][0]["content"] for row in repo_records)
+    patch_records = [row for row in records if row["behavior"] == "patch_addition"]
+    assert all("Copy the file path, function name, and return expression" in row["system"] for row in patch_records)
+    assert any("Patch task for `calc.py`" in row["messages"][0]["content"] for row in patch_records)
     assert {"--- a/flags.py", "def is_enabled(value):", "return value == 'true'"}.issubset(
         set(case_by_name["curated_flag_patch"]["required_substrings"])
     )
