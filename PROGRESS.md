@@ -1971,6 +1971,111 @@ the RAAM atomic config, likely via attention islands or anchor-preserved
 local-global routing, and rerun the same cardinality sweep before any larger
 chat/coding training.
 
+## AgentCoder RAAM Anchor-Attention Cardinality Ablation
+
+Added:
+
+- `configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml`
+
+Updated:
+
+- `docs/AGENTIC_CODING_EVALS.md` now includes the anchor-attention ablation
+  command.
+- `tests/test_agentcoder_atomic_cardinality_sweep.py` now asserts the ablation
+  keeps compression on while enabling preserved anchors and attention islands.
+
+This config keeps dynamic hourglass compression enabled, but adds a stronger
+exact route through the compressed/global stream:
+
+- `use_anchor_preserved_local_global: true`
+- `use_attention_islands: true`
+- `attention_island_layers: [1, 2]`
+- `compression.anchors_per_block: 4`
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py scripts/make_agentcoder_atomic_copy_sft.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_copy_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_no_compression_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    comp = data['compression']
+    print(path, data['attention_island_layers'], data['use_anchor_preserved_local_global'], data['use_attention_islands'], comp['enabled'], comp['anchors_per_block'], data['train']['seq_len'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed: `14 passed in 0.07s`
+- config parse confirmed the anchor-attention ablation uses `[1, 2]` attention
+  islands and `4` anchors per block
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_anchor_attention_20260703T063228Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `14 passed in 0.11s`
+- remote config parse confirmed `[1, 2] True True True 4`
+- full remote test suite passed after the run: `51 passed in 33.03s`
+- eval policy: mirrored eval with eval cases matched to train-record count
+- `mirror_val: true`
+- default train budget: `1200` steps per sub-run
+
+| Bindings | Full RAAM Exact Pass | RAAM No-Compression Exact Pass | RAAM Anchor-Attention Exact Pass | Anchor-Attention Val Loss |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 2 / 4 | 1 / 4 | 2 / 4 | 0.030546 |
+| 8 | 8 / 8 | 1 / 8 | 8 / 8 | 0.041757 |
+| 16 | 13 / 16 | 1 / 16 | 15 / 16 | 0.046363 |
+| 32 | 2 / 32 | 1 / 32 | 14 / 32 | 0.068648 |
+| 64 | 10 / 64 | 1 / 64 | 57 / 64 | 0.080535 |
+
+Representative failures:
+
+- anchor-attention `n=4` still copied wrong seen pairs for two prompts:
+  `copy_symbol_002` / `copy_file_002.py` and `copy_symbol_001` /
+  `copy_file_001.py`.
+- anchor-attention `n=16` had one mixed-pair failure:
+  `symbol=copy_symbol_013` with `file=copy_file_009.py`.
+- anchor-attention `n=64` had seven failures; most were valid but wrong seen
+  pairs, plus one malformed partial output for `atomic_mirror_060`.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_anchor_attention_20260703T063228Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: adding preserved anchors plus exact attention islands is the
+first architectural change that materially improves the binding floor. It does
+not fix low-cardinality instability (`n=4` remains `2 / 4`), but it changes the
+large-cardinality result from full RAAM's `10 / 64` to `57 / 64`, while the tiny
+Transformer baseline was `0 / 64` at the same `64`-binding gate. The next useful
+step is to make the exact route deterministic enough to remove wrong-slot
+collapses: either preserve all tokens for this tiny exact-copy control, add a
+deterministic special-token/string anchor policy, or add a slot-alignment loss
+before broader chat/coding training.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
