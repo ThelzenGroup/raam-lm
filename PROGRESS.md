@@ -2341,6 +2341,125 @@ step is not naive fixed spacing; it is content-aware deterministic anchoring or
 an auxiliary slot-alignment objective that biases partial anchors toward the
 identifier/value tokens needed for exact copying.
 
+## AgentCoder RAAM Token-ID Anchor Cardinality Ablation
+
+Added a deterministic content-aware anchor selector:
+
+- `DynamicHourglassCompressor` supports `anchor_selection: token_id_topk`
+- `token_id_topk` requires `input_ids` and anchors the highest token IDs inside
+  each compression block
+- `configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml`
+- `docs/AGENTIC_CODING_EVALS.md` now includes the token-ID anchor sweep command
+- `tests/test_anchor_selection.py` covers token-ID top-k anchor placement and
+  the required-`input_ids` error
+- `tests/test_agentcoder_atomic_cardinality_sweep.py` covers the new config
+
+The motivation was to test a cheap proxy for rare/code-like tokens. In the
+generated atomic copy tokenizer, learned `copy_*` values get higher IDs than
+byte fallback tokens, so `token_id_topk` should preserve identifier/value tokens
+without learning anchor scores.
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/compression.py src/raam_lm/model.py scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    comp = data['compression']
+    print(path, comp.get('anchor_selection', 'learned_topk'), comp['block_size'], comp['anchors_per_block'], data['attention_island_layers'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed: `17 passed in 0.11s`
+- config parse confirmed learned `4` anchors, all `8` anchors, uniform `4`
+  anchors, and token-ID `4` anchors are distinct configs
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_anchor_selection.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_token_anchor_attention_20260703T072932Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_token_anchor_attention_gate.yaml \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_token_anchor_n64_steps2400_20260703T073533Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `22 passed in 1.69s`
+- full remote test suite passed after the runs: `58 passed in 32.95s`
+- eval policy: mirrored eval with eval cases matched to train-record count,
+  except the focused run used fixed `64` eval cases
+- `mirror_val: true`
+
+Token-ID anchor sweep at the default `1200` training steps:
+
+| Bindings | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 4 | 4 / 4 | 0.029163 | 921600 |
+| 8 | 8 / 8 | 0.041700 | 921600 |
+| 16 | 16 / 16 | 0.045566 | 921600 |
+| 32 | 32 / 32 | 0.055519 | 921600 |
+| 64 | 21 / 64 | 0.092811 | 921600 |
+
+Focused `64`-binding longer-training probe:
+
+| Steps | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 1200 | 21 / 64 | 0.092811 | 921600 |
+| 2400 | 56 / 64 | 0.070240 | 1843200 |
+
+Representative failures:
+
+- default token-ID `n=64` produced behavior-correct `symbol/file` lines but
+  copied wrong seen slots, for example `copy_symbol_001` -> `copy_symbol_034`
+  and `copy_symbol_009` -> `copy_symbol_063`.
+- after `2400` steps, `n=64` still had `8` wrong-slot failures:
+  `atomic_mirror_000`, `007`, `009`, `019`, `025`, `026`, `034`, and `040`.
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_token_anchor_attention_20260703T072932Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_token_anchor_n64_steps2400_20260703T073533Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: token-ID anchors are a useful diagnostic but not the current
+efficient route. They are much better than uniform anchors at default steps and
+solve `4`, `8`, `16`, and `32` bindings cleanly, but the high-cardinality
+`64`-binding result is worse than learned 4-anchor top-k at `1200` steps
+(`21 / 64` versus `57 / 64`). Doubling optimization improves token-ID anchors
+to `56 / 64`, but that still only roughly matches the learned route while using
+twice the steps. The next architecture step should keep learned/content-aware
+anchors in play and add a stronger slot-alignment signal or hybrid anchor prior,
+not switch wholesale to token-ID anchors before full chat/coding training.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
