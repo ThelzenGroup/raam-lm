@@ -102,6 +102,12 @@ nearby training example. Those failures are reported as `slot_error` when the
 behavior family is correct but required text is missing or forbidden text is
 present.
 
+Boolean-flag patch cases are intentionally shaped differently from arithmetic
+bug-fix patches. They name themselves as boolean flag repair, avoid focused
+pytest-command language, and require the exact file/helper/enabled-literal
+slots. This keeps a model from passing by emitting the familiar addition-patch
+template when the task is really a feature-flag literal fix.
+
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
 spending on a larger supervised or continuation run.
@@ -132,3 +138,6 @@ When exact pass rate stalls but behavior accuracy improves, inspect
 `slot_error`, `missing_required_substrings`, and `present_forbidden_substrings`.
 Typical examples are choosing the correct repo-lookup style but naming the wrong
 file, or producing the right kind of patch for the wrong helper/value pair.
+If behavior accuracy drops, inspect the confusion matrix first; a flag patch
+predicted as `patch_addition` means the curriculum still has patch-family
+collision, not merely poor slot copying.

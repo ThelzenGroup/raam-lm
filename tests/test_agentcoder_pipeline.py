@@ -164,10 +164,20 @@ def test_curated_sft_generator_has_behavior_coverage():
     case_by_name = {row["name"]: row for row in cases}
     assert "Do not write code" in case_by_name["curated_debugging"]["prompt"]
     assert "normalize_title is implemented in titles.py" in case_by_name["curated_repo_lookup"]["required_substrings"]
-    assert {"slugify", "names.py", "calc.py"}.issubset(set(case_by_name["curated_repo_lookup"]["forbidden_substrings"]))
+    assert {"slugify", "names.py", "calc.py", "render_invoice", "invoices.py"}.issubset(
+        set(case_by_name["curated_repo_lookup"]["forbidden_substrings"])
+    )
     assert "calc.py" not in case_by_name["curated_repo_lookup"]["prompt"]
-    assert {"toggles.py", "cache_enabled", "== 'on'"}.issubset(set(case_by_name["curated_flag_patch"]["forbidden_substrings"]))
-    assert "Copy the exact file path" in case_by_name["curated_flag_patch"]["prompt"]
+    assert {"--- a/flags.py", "def is_enabled(value):", "return value == 'true'"}.issubset(
+        set(case_by_name["curated_flag_patch"]["required_substrings"])
+    )
+    assert {"calc.py", "def add", "return a + b", "toggles.py", "cache_enabled", "== 'on'"}.issubset(
+        set(case_by_name["curated_flag_patch"]["forbidden_substrings"])
+    )
+    assert "Boolean flag task, not arithmetic" in case_by_name["curated_flag_patch"]["prompt"]
+    flag_records = [row for row in records if row["behavior"] == "patch_boolean_flag"]
+    assert all("Boolean flag repair only" in row["system"] for row in flag_records)
+    assert all("Test command" not in row["trace"][0]["content"] for row in flag_records)
 
 
 def test_train_resume_generate_and_agentic_eval(tmp_path):

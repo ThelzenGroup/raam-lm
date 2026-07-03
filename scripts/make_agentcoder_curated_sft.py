@@ -138,13 +138,23 @@ def build_train_records() -> list[dict[str, Any]]:
         ("rollout.py", "def rollout_enabled(value):\n    return value == 'no'", "def rollout_enabled(value):\n    return value == 'yes'"),
     ]
     for path, before, after in flag_variants:
+        helper = before.split("(", 1)[0].replace("def ", "")
+        disabled_literal = before.rsplit("== ", 1)[1]
+        enabled_literal = after.rsplit("== ", 1)[1]
         records.append(
             record(
                 "patch_boolean_flag",
-                f"In {path}, the boolean helper is inverted. Patch only that file and preserve the shown helper name and literal.",
-                patch_text(path, before, after, f"In {path}, compare against the enabled value from the shown helper."),
+                (
+                    "Boolean flag task, not arithmetic. "
+                    f"In {path}, change only `{helper}` so it compares with enabled literal {enabled_literal} "
+                    f"instead of disabled literal {disabled_literal}."
+                ),
+                patch_text(path, before, after, f"Boolean flag patch for {path}; only the comparison literal changes."),
                 f"Changed {path} to compare against the enabled value.",
-                system_suffix="Copy the exact file path, helper name, and enabled literal from the current repo context. Prefer minimal diffs.",
+                system_suffix=(
+                    "Boolean flag repair only. Do not solve arithmetic/addition patches. "
+                    "Copy the exact file path, helper name, and enabled literal from the current repo context."
+                ),
                 repo_context=f"file: {path}\n```python\n{before}\n```",
             )
         )
@@ -357,10 +367,13 @@ def build_train_records() -> list[dict[str, Any]]:
         records.append(
             record(
                 "repo_context_lookup",
-                f"Where is {func} implemented?",
-                f"{func} is implemented in {impl_file}. That is the file containing def {func}.",
+                f"Repo lookup task. Requested symbol: {func}. Which file defines that exact symbol?",
+                f"{func} is implemented in {impl_file}. That file contains def {func}.",
                 f"The implementation is in {impl_file}.",
-                system_suffix="Use repo context when it is provided. Copy the exact requested symbol and cite the file that defines it, not the file that imports it.",
+                system_suffix=(
+                    "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
+                    "Do not substitute another symbol from the context or training examples."
+                ),
                 repo_context=repo,
             )
         )
@@ -517,13 +530,25 @@ def build_eval_cases() -> list[dict[str, Any]]:
         case(
             "curated_repo_lookup",
             chat_prompt(
-                "Use repo context when it is provided. Cite the file that defines the function, not the file that imports it.",
-                "Where is normalize_title implemented?",
+                (
+                    "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
+                    "Do not substitute another symbol from the context or training examples."
+                ),
+                "Repo lookup task. Requested symbol: normalize_title. Which file defines that exact symbol?",
                 "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
             ["normalize_title is implemented in titles.py"],
             expected_behavior="repo_context_lookup",
-            forbidden_substrings=["slugify", "names.py", "add is implemented", "calc.py", "parse_port", "config.py"],
+            forbidden_substrings=[
+                "slugify",
+                "names.py",
+                "add is implemented",
+                "calc.py",
+                "parse_port",
+                "config.py",
+                "render_invoice",
+                "invoices.py",
+            ],
         ),
         case(
             "curated_test_command",
@@ -540,13 +565,27 @@ def build_eval_cases() -> list[dict[str, Any]]:
         case(
             "curated_flag_patch",
             chat_prompt(
-                "Copy the exact file path, helper name, and enabled literal from the current repo context. Prefer minimal diffs.",
-                "The enabled flag is inverted. Patch it.",
+                (
+                    "Boolean flag repair only. Do not solve arithmetic/addition patches. "
+                    "Copy the exact file path, helper name, and enabled literal from the current repo context."
+                ),
+                "Boolean flag task, not arithmetic. In flags.py, change only is_enabled so it compares with enabled literal 'true' instead of disabled literal 'false'.",
                 "file: flags.py\n```python\ndef is_enabled(value):\n    return value == 'false'\n```",
             ),
-            ["return value == 'true'"],
+            ["--- a/flags.py", "def is_enabled(value):", "return value == 'true'"],
             expected_behavior="patch_boolean_flag",
-            forbidden_substrings=["toggles.py", "cache_enabled", "== 'on'", "== 'off'", "settings.py", "feature_on"],
+            forbidden_substrings=[
+                "calc.py",
+                "def add",
+                "return a + b",
+                "pytest tests/test_calc.py",
+                "toggles.py",
+                "cache_enabled",
+                "== 'on'",
+                "== 'off'",
+                "settings.py",
+                "feature_on",
+            ],
         ),
     ]
 
@@ -579,8 +618,8 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v4",
-        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics; not a benchmark dataset.",
+        "format": "agentcoder-curated-sft-v5",
+        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics and patch-family separation; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, indent=2, sort_keys=True))
