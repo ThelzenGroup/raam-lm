@@ -62,6 +62,7 @@ class CopyHeadConfig:
     binding_carry_min_source_gap: int = 0
     binding_carry_max_anchor_occurrences: int = 0
     key_follow_strength: float = 0.0
+    key_follow_continuation_strength: float = 0.0
     key_follow_recent_tokens: int = 0
     key_follow_value_offset: int = 0
     key_follow_value_span: int = 1
@@ -71,6 +72,7 @@ class CopyHeadConfig:
     key_follow_match_value_prefix: bool = False
     key_follow_separator_token_id: int = -1
     key_follow_recent_after_token_id: int = -1
+    key_follow_stop_token_ids: list[int] = field(default_factory=list)
 
 
 @dataclass

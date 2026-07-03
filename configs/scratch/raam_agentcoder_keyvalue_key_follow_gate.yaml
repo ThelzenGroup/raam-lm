@@ -23,6 +23,7 @@ copy_head:
   temperature: 1.0
   include_current_token: true
   key_follow_strength: 10.0
+  key_follow_continuation_strength: 30.0
   key_follow_recent_tokens: 24
   key_follow_value_offset: 3
   key_follow_value_span: 1
@@ -32,6 +33,7 @@ copy_head:
   key_follow_match_value_prefix: true
   key_follow_separator_token_id: 275
   key_follow_recent_after_token_id: 6
+  key_follow_stop_token_ids: [23]
 compression:
   enabled: true
   block_size: 8

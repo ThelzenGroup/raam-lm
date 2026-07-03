@@ -148,6 +148,7 @@ def test_keyvalue_key_follow_configs_enable_same_route():
         assert payload["model_name"] == model_name
         assert payload["copy_head"]["enabled"] is True
         assert payload["copy_head"]["key_follow_strength"] > 0
+        assert payload["copy_head"]["key_follow_continuation_strength"] == 30.0
         assert payload["copy_head"]["key_follow_recent_tokens"] == 24
         assert payload["copy_head"]["key_follow_value_offset"] == 3
         assert payload["copy_head"]["key_follow_min_source_gap"] == 8
@@ -156,3 +157,4 @@ def test_keyvalue_key_follow_configs_enable_same_route():
         assert payload["copy_head"]["key_follow_match_value_prefix"] is True
         assert payload["copy_head"]["key_follow_separator_token_id"] == 275
         assert payload["copy_head"]["key_follow_recent_after_token_id"] == 6
+        assert payload["copy_head"]["key_follow_stop_token_ids"] == [23]

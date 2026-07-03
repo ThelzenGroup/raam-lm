@@ -131,7 +131,7 @@ class CausalCopyHead(nn.Module):
         self,
         input_ids: torch.Tensor,
         source_mask: torch.Tensor,
-    ) -> torch.Tensor | None:
+    ) -> tuple[torch.Tensor, torch.Tensor] | None:
         recent_tokens = max(0, int(self.config.key_follow_recent_tokens))
         value_offset = max(1, int(self.config.key_follow_value_offset))
         value_span = max(1, int(self.config.key_follow_value_span))
@@ -146,8 +146,13 @@ class CausalCopyHead(nn.Module):
         recent_after_token_id = int(self.config.key_follow_recent_after_token_id)
         align_value_offset = bool(self.config.key_follow_align_value_offset)
         match_value_prefix = bool(self.config.key_follow_match_value_prefix)
+        stop_token_ids = [int(token_id) for token_id in self.config.key_follow_stop_token_ids]
         positions = torch.arange(seq_len, device=input_ids.device)
-        follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        first_follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        continuation_follow = torch.zeros_like(first_follow)
+        source_not_stopped = torch.ones(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+        for token_id in stop_token_ids:
+            source_not_stopped = source_not_stopped & (input_ids != token_id)
         source_region = self._source_region_mask(
             input_ids,
             source_mask,
@@ -202,12 +207,25 @@ class CausalCopyHead(nn.Module):
                     pair_valid.unsqueeze(0)
                     & separator_matches[:, :, None]
                     & recent_after_boundary[:, :, None]
+                    & source_not_stopped[:, None, :]
                     & source_region
                 )
-                follow = follow + recent_weight * (matches & valid).to(dtype=follow.dtype)
+                target = first_follow if recent_offset == 1 else continuation_follow
+                target += recent_weight * (matches & valid).to(dtype=target.dtype)
 
-        denom = follow.sum(dim=-1, keepdim=True)
-        return torch.where(denom > 0, follow / denom.clamp_min(1e-12), torch.zeros_like(follow))
+        first_denom = first_follow.sum(dim=-1, keepdim=True)
+        continuation_denom = continuation_follow.sum(dim=-1, keepdim=True)
+        first_probs = torch.where(
+            first_denom > 0,
+            first_follow / first_denom.clamp_min(1e-12),
+            torch.zeros_like(first_follow),
+        )
+        continuation_probs = torch.where(
+            continuation_denom > 0,
+            continuation_follow / continuation_denom.clamp_min(1e-12),
+            torch.zeros_like(continuation_follow),
+        )
+        return first_probs, continuation_probs
 
     def forward(
         self,
@@ -256,10 +274,16 @@ class CausalCopyHead(nn.Module):
                 copy_logits = torch.logaddexp(copy_logits, carry_logits)
             key_follow_probs_by_pos = self._key_follow_probs_by_pos(input_ids, source_mask)
             if key_follow_probs_by_pos is not None:
-                key_follow_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
-                key_follow_probs_by_vocab.scatter_add_(dim=-1, index=index, src=key_follow_probs_by_pos)
-                key_follow_logits = torch.log(key_follow_probs_by_vocab.clamp_min(1e-12)) + float(
-                    self.config.key_follow_strength
-                )
-                copy_logits = torch.logaddexp(copy_logits, key_follow_logits)
+                first_follow_by_pos, continuation_follow_by_pos = key_follow_probs_by_pos
+                for route_probs_by_pos, route_strength in [
+                    (first_follow_by_pos, float(self.config.key_follow_strength)),
+                    (
+                        continuation_follow_by_pos,
+                        float(self.config.key_follow_continuation_strength or self.config.key_follow_strength),
+                    ),
+                ]:
+                    route_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
+                    route_probs_by_vocab.scatter_add_(dim=-1, index=index, src=route_probs_by_pos)
+                    route_logits = torch.log(route_probs_by_vocab.clamp_min(1e-12)) + route_strength
+                    copy_logits = torch.logaddexp(copy_logits, route_logits)
             return torch.logaddexp(lm_logits, copy_logits)
