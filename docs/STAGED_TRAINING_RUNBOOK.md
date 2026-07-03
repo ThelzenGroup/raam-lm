@@ -247,6 +247,19 @@ the `lr1e4` gate, but agentic scores remain zero and validation still rises afte
 the best point. Do not launch full training yet. The next gate should either test
 `5e-5` or export/check the step-600 region from the current best schedule.
 
+`5e-5` gate command:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_gate \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

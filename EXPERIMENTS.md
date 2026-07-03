@@ -86,6 +86,9 @@ stability evidence only. The next useful branch is either a `5e-5` gate to test
 whether the best point moves later again, or a checkpoint-export run around the
 current step-600 best region for qualitative inspection.
 
+The next LR candidate is `configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml`,
+which caps LR at `0.00005` with the same 500-step warmup.
+
 ## Ablations
 
 - No compression.

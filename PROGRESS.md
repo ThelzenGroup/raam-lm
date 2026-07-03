@@ -662,3 +662,9 @@ scores remain zero, so this is base-LM stability evidence only. Full training is
 still not cleared. The next useful decision is either a `5e-5` gate to see whether
 the best point moves later again, or a short checkpoint-export run around the
 current step-600 best region for qualitative inspection.
+
+Added next candidate config:
+`configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml`. It keeps the same
+compression-only Stage 5 setup with reconstruction and MTP disabled, but caps LR
+at `0.00005` with `warmup_steps: 500`. This tests whether the best-validation
+point continues moving later and whether post-best drift shrinks further.
