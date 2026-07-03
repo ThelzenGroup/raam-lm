@@ -962,3 +962,74 @@ as if it were ready. The next highest-value work is a data/tokenizer/objective
 sanity pass: verify chat templates and packing boundaries, inspect memorized
 training examples, add a small overfit test on curated chat/coding records, and
 only then run the next paid Stage 5 continuation or larger scratch run.
+
+## AgentCoder Tiny Overfit Sanity Gate
+
+Added and ran a curated overfit sanity gate before any larger paid chat/coding
+run:
+
+- `examples/agentcoder_overfit_sanity.jsonl`
+- `configs/scratch/raam_agentcoder_overfit.yaml`
+- `scripts/eval_overfit_sanity.py`
+- `scripts/run_agentcoder_overfit_sanity.py`
+- `scripts/pack_dataset.py --mirror-val`
+
+Local validation before the Vast run:
+
+```bash
+python3 -m py_compile scripts/eval_overfit_sanity.py scripts/run_agentcoder_overfit_sanity.py scripts/pack_dataset.py scripts/train_tokenizer.py src/raam_lm/__init__.py src/raam_lm/agent_data.py
+python3 scripts/train_tokenizer.py examples/agentcoder_overfit_sanity.jsonl --output work/overfit_tokenizer_smoke/tokenizer.json --vocab-size 1024
+git diff --check
+```
+
+Remote validation on Vast RTX 5090:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k mirror_validation
+/venv/main/bin/python -m py_compile scripts/eval_overfit_sanity.py scripts/run_agentcoder_overfit_sanity.py
+/venv/main/bin/python -m pytest -q
+```
+
+Results: targeted mirror-val test passed, script syntax passed, and the full
+test suite passed with `22 passed in 32.73s`.
+
+Overfit run:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_overfit_sanity.py \
+  --config configs/scratch/raam_agentcoder_overfit.yaml \
+  --data examples/agentcoder_overfit_sanity.jsonl \
+  --output-dir /root/raam-lm/runs/agentcoder_overfit_sanity_20260703T024025Z \
+  --device cuda \
+  --clean
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_overfit_sanity_20260703T024025Z`.
+The pull includes the summary, exact eval JSON, qualitative samples, tokenizer,
+packed manifests, train log, and the small final checkpoint. Both Vast RTX 5090
+instances were verified stopped after the pull.
+
+| Metric | Value |
+| --- | ---: |
+| Overfit pass rate | 8 / 8 |
+| EOS generated | 8 / 8 |
+| Valid JSON command case | 1 / 1 |
+| Final train loss | 0.023516744375228882 |
+| Final mirrored validation loss | 0.01699875178746879 |
+| Last checkpoint step | 1199 |
+| Tokens seen | 1843200 |
+| Final tokens/sec | 50214.59541508371 |
+| Peak allocated VRAM MB | 129.876953125 |
+| Non-embedding params | 1244802 |
+| Estimated FLOPs/token | 2238592 |
+
+Interpretation: the data renderer, tokenizer coverage, prompt boundaries,
+generation path, EOS handling, JSON/tool formatting, and patch/test-command
+targets can be learned by a tiny RAAM model on a deliberately mirrored toy set.
+This does not prove general chat or coding ability, but it does clear the most
+basic pipeline sanity gate that failed qualitatively at Stage 5 scale. The next
+step is to run a small real-data slice gate that is not mirrored: keep the same
+exact eval prompts, train on a slightly larger curated subset, and require
+held-out validation plus qualitative behavior to improve before launching a
+larger paid continuation.
