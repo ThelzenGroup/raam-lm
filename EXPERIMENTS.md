@@ -55,6 +55,13 @@ generation and `0.0` agentic scores. The next candidate is
 `raam_agentcoder_100m_stage5_stable`, which keeps compression-only RAAM but disables
 early reconstruction loss and curriculum MTP until a clean base-LM curve exists.
 
+Stable Stage 5 gate evidence: `raam_agentcoder_100m_stage5_stable` avoids the
+catastrophic auxiliary-loss blow-up, but it still peaks early on the expanded
+corpus. In the `1000 -> 1100` step gate, validation improved from `10.3872` to a
+best `3.1310` at step 500, then worsened to `4.5944` by step 1099. The next
+experiment should keep the stable loss setup but lower/cap the learning rate or
+shorten warmup before any full training spend.
+
 ## Ablations
 
 - No compression.

@@ -203,6 +203,12 @@ rerunning the older auxiliary-loss schedule for comparison.
 For a pure smoke of the Stage 5 wrapper, lower the sample and step counts with env
 overrides rather than editing the script.
 
+Current Stage 5 gate status: the stable config avoids the catastrophic auxiliary
+loss blow-up, but the first `1000 -> 1100` step run peaked at step 500 and then
+validation worsened. Before a full training run, run a learning-rate gate that
+keeps reconstruction/MTP disabled and caps the maximum LR below the value reached
+after step 500.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

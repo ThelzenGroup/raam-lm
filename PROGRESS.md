@@ -440,3 +440,73 @@ Fallback validation passed with system Python: YAML loaded successfully,
 `use_curriculum_mtp` was false, `compression.recon_loss_weight` was `0.0`, and
 `mtp.enabled` was false. Torch-side validation must run on Vast or in a local
 environment with PyTorch installed.
+
+## Stage 5 Stable Schedule Gate
+
+Pushed `306ad3c` with the stable Stage 5 config and updated wrapper default:
+
+- config: `configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`
+- default runner: `scripts/vast_train_100m_candidate.sh`
+- early reconstruction loss disabled with `compression.recon_loss_weight: 0.0`
+- curriculum MTP disabled with `use_curriculum_mtp: false` and `mtp.enabled: false`
+
+Ran a bounded Vast RTX 5090 gate on the existing expanded Stage 5 packed corpus:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_stable_gate_20260703T003821Z/train \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_stable_gate_20260703T003821Z`.
+The pull is about 2 MB and contains no `.pt` files. Both Vast RTX 5090 instances
+were stopped/exited after the pull.
+
+Stable gate metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Last logged step | 1099 |
+| Tokens seen | 72089600 |
+| First validation loss | 10.387241506576538 |
+| Best validation loss | 3.130998957157135 at step 500 |
+| Final validation loss | 4.5944470286369326 |
+| Final train loss | 3.9415853023529053 |
+| Final tokens/sec | 243616.58096179334 |
+| Peak allocated VRAM MB | 12630.3056640625 |
+| Non-embedding params | 67080706 |
+| Estimated FLOPs/token | 151132672 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 0 | 10.387241506576538 |
+| 100 | 6.659002757072448 |
+| 200 | 5.01783173084259 |
+| 300 | 3.725554144382477 |
+| 400 | 3.1932442784309387 |
+| 500 | 3.130998957157135 |
+| 600 | 3.23995920419693 |
+| 700 | 3.318199861049652 |
+| 800 | 3.3735808610916136 |
+| 900 | 3.475276291370392 |
+| 999 | 4.031751370429992 |
+| 1000 | 4.032040143013001 |
+| 1099 | 4.5944470286369326 |
+
+Interpretation: disabling early reconstruction/MTP fixes the catastrophic collapse
+from the previous expanded Stage 5 run, but it does not make this setup ready for
+full training. The validation curve still peaks around step 500 and then degrades
+while the LR is still warming up. The next highest-value experiment is a stable
+Stage 5 learning-rate gate: same data and loss setup, but cap LR around the step
+500 value or use a shorter/lower warmup before spending on a longer run.
