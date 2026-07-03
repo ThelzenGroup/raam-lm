@@ -2211,6 +2211,136 @@ like the all-anchor ceiling, and keep broad chat/coding training blocked until
 the efficient route passes the same exact-binding gate without needing to
 preserve every token.
 
+## AgentCoder RAAM Uniform-Anchor Cardinality Ablation
+
+Added deterministic anchor selection support:
+
+- `CompressionConfig.anchor_selection`, defaulting to `learned_topk`
+- `DynamicHourglassCompressor` support for `anchor_selection: uniform`
+- compressor metadata now records `anchor_selection`
+- RAAM model aux now records `anchor_selection`
+- `configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml`
+
+Updated:
+
+- `docs/AGENTIC_CODING_EVALS.md` now includes the uniform-anchor sweep command.
+- `tests/test_anchor_selection.py` covers deterministic uniform anchor indices
+  and rejects `anchors_per_block > block_size`.
+- `tests/test_agentcoder_atomic_cardinality_sweep.py` covers the uniform-anchor
+  config.
+
+This config keeps the efficient partial-anchor budget from the previous
+anchor-attention ablation, but makes the four anchors deterministic rather than
+learned:
+
+- `attention_island_layers: [1, 2]`
+- `compression.block_size: 8`
+- `compression.anchors_per_block: 4`
+- `compression.anchor_selection: uniform`
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/compression.py src/raam_lm/model.py scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    comp = data['compression']
+    print(path, comp.get('anchor_selection', 'learned_topk'), comp['block_size'], comp['anchors_per_block'], data['attention_island_layers'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed: `16 passed in 0.10s`
+- config parse confirmed learned `4` anchors, uniform `4` anchors, and all `8`
+  anchors are distinct configs
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_anchor_selection.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_uniform_anchor_attention_20260703T070842Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_uniform_anchor_n64_steps2400_20260703T071433Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `19 passed in 1.60s`
+- remote config parse confirmed `uniform 8 4`
+- full remote test suite passed after the runs: `55 passed in 33.04s`
+- eval policy: mirrored eval with eval cases matched to train-record count
+- `mirror_val: true`
+
+Uniform-anchor sweep at the default `1200` training steps:
+
+| Bindings | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 4 | 4 / 4 | 0.029176 | 921600 |
+| 8 | 5 / 8 | 0.043210 | 921600 |
+| 16 | 11 / 16 | 0.055005 | 921600 |
+| 32 | 31 / 32 | 0.069652 | 921600 |
+| 64 | 1 / 64 | 0.109745 | 921600 |
+
+Focused `64`-binding longer-training probe:
+
+| Steps | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 1200 | 1 / 64 | 0.109745 | 921600 |
+| 2400 | 16 / 64 | 0.090924 | 1843200 |
+
+Representative failures:
+
+- default uniform `n=8` copied wrong seen pairs for three prompts, commonly
+  `copy_symbol_001` / `copy_file_001.py`.
+- default uniform `n=32` missed one case, copying `copy_symbol_001` /
+  `copy_file_001.py` for `atomic_mirror_026`.
+- default uniform `n=64` collapsed most prompts to `copy_symbol_003` /
+  `copy_file_003.py`.
+- after `2400` steps, uniform `n=64` improved but still had `48` wrong-slot
+  failures.
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_uniform_anchor_attention_20260703T070842Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_uniform_anchor_n64_steps2400_20260703T071433Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: deterministic uniform anchors are not the efficient fix. They
+do remove the low-cardinality `n=4` failure and almost solve `n=32`, but they
+hurt `n=8`, `n=16`, and especially `n=64`. The learned 4-anchor route remains
+the best efficient route for high-cardinality binding at this scale (`57 / 64`
+at `1200` steps), while the all-anchor ceiling proves the model can reach
+`64 / 64` with full token preservation and more optimization. The next useful
+step is not naive fixed spacing; it is content-aware deterministic anchoring or
+an auxiliary slot-alignment objective that biases partial anchors toward the
+identifier/value tokens needed for exact copying.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
