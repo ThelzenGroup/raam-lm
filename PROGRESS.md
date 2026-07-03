@@ -1195,3 +1195,74 @@ confusions: the Python-files JSON prompt produced the pytest JSON command, and
 the default test-command prompt produced a repo-context answer. The next useful
 step is to add a focused command-disambiguation mini-curriculum, then rerun this
 curated gate before considering a larger supervised run or 100M continuation.
+
+## AgentCoder Command-Disambiguation Rerun
+
+Expanded the curated generator with a focused command-disambiguation
+mini-curriculum:
+
+- added 9 `command_disambiguation` examples
+- increased direct `test_command` examples from 4 to 8
+- updated the generator coverage test and eval docs
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/run_agentcoder_curated_gate.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_smoke_v2/train.jsonl --cases-output work/curated_sft_smoke_v2/cases.json --manifest-output work/curated_sft_smoke_v2/manifest.json
+python3 scripts/train_tokenizer.py work/curated_sft_smoke_v2/train.jsonl --output work/curated_sft_smoke_v2/tokenizer.json --vocab-size 1536
+git diff --check
+```
+
+Remote validation and rerun:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_cmdfix_20260703T031643Z \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Results: targeted generator test passed and the full test suite passed with
+`23 passed in 32.38s`.
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_cmdfix_20260703T031643Z`.
+The pull includes generated train/eval data, manifests, tokenizer, packed data,
+train log, runner log, exact eval JSON, qualitative samples, and the small final
+checkpoint. Both Vast RTX 5090 instances were verified stopped after the pull.
+
+| Metric | Curated v1 | Command-disambiguation v2 |
+| --- | ---: | ---: |
+| Held-out pass rate | 8 / 10 | 7 / 10 |
+| Train records | 60 | 73 |
+| Train tokens | 7679 | 8695 |
+| Validation tokens | 1543 | 2049 |
+| Final train loss | 0.027493080124258995 | 0.029969634488224983 |
+| Final validation loss | 1.5991248786449432 | 0.7426003813743591 |
+| Final tokens/sec | 68901.96115779184 | 83803.19876940553 |
+| Peak allocated VRAM MB | 151.90576171875 | 151.93505859375 |
+
+The command-focused examples fixed the two original command failures:
+
+- strict JSON Python-file command: fail -> pass
+- default Python test command: fail -> pass
+
+But the update introduced three exact-behavior regressions:
+
+- risky-edit clarifying question produced the Python-file JSON command
+- held-out `is_even` completion regressed to `is_odd`
+- boolean flag patch regressed to an add patch
+
+Interpretation: the lower validation loss shows the broader synthetic
+curriculum is easier for the model to model, but exact held-out behavior is
+still unstable and sensitive to small distribution shifts. The best exact gate
+result remains curated v1 at `8 / 10`; command-disambiguation v2 is useful
+diagnostic evidence, not a better candidate. The next step should be a balanced
+curriculum with equalized behavior-family counts and a confusion-matrix style
+eval summary, rather than simply adding more examples for whichever behavior
+failed last.
