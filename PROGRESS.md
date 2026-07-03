@@ -1266,3 +1266,63 @@ diagnostic evidence, not a better candidate. The next step should be a balanced
 curriculum with equalized behavior-family counts and a confusion-matrix style
 eval summary, rather than simply adding more examples for whichever behavior
 failed last.
+
+## AgentCoder Balanced-Curriculum Gate Prep
+
+Implemented the next diagnostic gate step:
+
+- balanced the deterministic curated SFT generator to 8 examples for each of 12
+  behavior families, for 96 train records total
+- added `expected_behavior` labels to all 10 held-out eval cases
+- added behavior inference and a confusion matrix to `scripts/eval_overfit_sanity.py`
+- surfaced behavior accuracy/confusion in the curated gate summary
+- updated the generator coverage test and eval docs
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/eval_overfit_sanity.py scripts/run_agentcoder_curated_gate.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_balanced_smoke/train.jsonl --cases-output work/curated_sft_balanced_smoke/cases.json --manifest-output work/curated_sft_balanced_smoke/manifest.json
+python3 scripts/train_tokenizer.py work/curated_sft_balanced_smoke/train.jsonl --output work/curated_sft_balanced_smoke/tokenizer.json --vocab-size 1536
+git diff --check
+```
+
+Generated manifest:
+
+```json
+{
+  "balanced_behavior_target": 8,
+  "train_records": 96,
+  "eval_cases": 10,
+  "format": "agentcoder-curated-sft-v2"
+}
+```
+
+The local focused pytest collection could not run because this host's Python
+does not have `torch` installed:
+
+```text
+ModuleNotFoundError: No module named 'torch'
+```
+
+Attempted to start Vast instance `43634442` for the remote RTX 5090 gate, but
+Vast returned:
+
+```text
+Required resources are currently unavailable, state change queued.
+```
+
+After a longer poll, both Vast RTX 5090 instances still reported
+`actual_status: exited` and `cur_state: stopped`, so no paid gate was run. The
+next resume step is to retry starting `43634442` and run:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_balanced_<UTC_TIMESTAMP> \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
