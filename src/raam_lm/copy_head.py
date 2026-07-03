@@ -28,6 +28,8 @@ class CausalCopyHead(nn.Module):
         lm_logits: torch.Tensor,
     ) -> torch.Tensor:
         bsz, seq_len, _ = hidden.shape
+        hidden = hidden.float()
+        lm_logits = lm_logits.float()
         query = self.query(hidden)
         key = self.key(hidden)
         scores = torch.matmul(query, key.transpose(-1, -2))
@@ -37,18 +39,17 @@ class CausalCopyHead(nn.Module):
         offset = 0 if self.config.include_current_token else 1
         causal_mask = torch.ones(seq_len, seq_len, device=hidden.device, dtype=torch.bool).tril(diagonal=-offset)
         source_mask = causal_mask.unsqueeze(0)
-        scores = scores.masked_fill(~source_mask, torch.finfo(scores.dtype).min)
-        copy_probs_by_pos = torch.softmax(scores.float(), dim=-1).to(dtype=lm_logits.dtype)
+        scores = scores.masked_fill(~source_mask, -1.0e9)
+        copy_probs_by_pos = torch.softmax(scores, dim=-1)
         copy_probs_by_pos = copy_probs_by_pos * source_mask.to(dtype=copy_probs_by_pos.dtype)
         denom = copy_probs_by_pos.sum(dim=-1, keepdim=True).clamp_min(1e-12)
         copy_probs_by_pos = copy_probs_by_pos / denom
-        copy_probs_by_pos = copy_probs_by_pos.to(dtype=lm_logits.dtype)
         copy_probs_by_vocab = torch.zeros(
             bsz,
             seq_len,
             self.vocab_size,
             device=hidden.device,
-            dtype=lm_logits.dtype,
+            dtype=torch.float32,
         )
         index = input_ids.unsqueeze(1).expand(bsz, seq_len, seq_len)
         copy_probs_by_vocab.scatter_add_(dim=-1, index=index, src=copy_probs_by_pos)

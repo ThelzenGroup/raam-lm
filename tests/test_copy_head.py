@@ -42,7 +42,7 @@ def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     torch.testing.assert_close(base[:, :3], changed[:, :3])
 
 
-def test_causal_copy_head_matches_lower_precision_logit_dtype():
+def test_causal_copy_head_promotes_lower_precision_logits_for_stability():
     config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
     head = CausalCopyHead(d_model=4, vocab_size=16, config=config)
     zero_copy_projection_weights(head)
@@ -52,7 +52,23 @@ def test_causal_copy_head_matches_lower_precision_logit_dtype():
 
     out = head(hidden, input_ids, lm_logits)
 
-    assert out.dtype == torch.bfloat16
+    assert out.dtype == torch.float32
+
+
+def test_causal_copy_head_backward_is_finite_with_lower_precision_logits():
+    config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
+    head = CausalCopyHead(d_model=4, vocab_size=16, config=config)
+    hidden = torch.randn(2, 6, 4, requires_grad=True)
+    input_ids = torch.tensor([[3, 5, 5, 9, 4, 8], [2, 7, 7, 1, 6, 3]])
+    lm_logits = torch.randn(2, 6, 16, dtype=torch.bfloat16).requires_grad_()
+
+    out = head(hidden, input_ids, lm_logits)
+    loss = out[:, :-1].float().mean()
+    loss.backward()
+
+    assert torch.isfinite(hidden.grad).all()
+    assert torch.isfinite(head.query.weight.grad).all()
+    assert torch.isfinite(head.key.weight.grad).all()
 
 
 def test_registry_models_enable_copy_head_from_config():
