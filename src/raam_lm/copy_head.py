@@ -227,6 +227,110 @@ class CausalCopyHead(nn.Module):
         )
         return first_probs, continuation_probs
 
+    def _request_key_follow_probs_by_pos(
+        self,
+        input_ids: torch.Tensor,
+        source_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+        strength = float(self.config.request_key_follow_strength)
+        continuation_strength = float(
+            self.config.request_key_follow_continuation_strength
+            or self.config.request_key_follow_strength
+        )
+        if not strength and not continuation_strength:
+            return None
+
+        bsz, seq_len = input_ids.shape
+        value_offset = max(1, int(self.config.key_follow_value_offset))
+        value_span = max(1, int(self.config.request_key_follow_value_span))
+        recent_tokens = max(0, int(self.config.request_key_follow_recent_tokens))
+        request_after_token_id = int(self.config.request_key_follow_after_token_id)
+        request_before_token_id = int(self.config.request_key_follow_before_token_id)
+        if request_after_token_id < 0 or request_before_token_id < 0:
+            return None
+
+        min_source_gap = max(0, int(self.config.key_follow_min_source_gap))
+        source_until_token_id = int(self.config.key_follow_source_until_token_id)
+        stop_token_ids = [int(token_id) for token_id in self.config.key_follow_stop_token_ids]
+        positions = torch.arange(seq_len, device=input_ids.device)
+        source_region = self._source_region_mask(
+            input_ids,
+            source_mask,
+            min_source_gap=min_source_gap,
+            source_until_token_id=source_until_token_id,
+        )
+        source_not_stopped = torch.ones(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+        for token_id in stop_token_ids:
+            source_not_stopped = source_not_stopped & (input_ids != token_id)
+
+        request_after_positions = torch.where(
+            input_ids == request_after_token_id,
+            positions.unsqueeze(0),
+            torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+        )
+        last_request_after = torch.cummax(request_after_positions, dim=1).values
+        request_before_positions = torch.where(
+            input_ids == request_before_token_id,
+            positions.unsqueeze(0),
+            torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+        )
+        last_request_before = torch.cummax(request_before_positions, dim=1).values
+        request_pos = positions
+        request_valid = (
+            (request_pos[None, None, :] > last_request_after[:, :, None])
+            & (request_pos[None, None, :] < last_request_before[:, :, None])
+            & (request_pos[None, None, :] <= positions[None, :, None])
+        )
+        if recent_tokens:
+            request_valid = request_valid & (
+                (last_request_before[:, :, None] - request_pos[None, None, :]) <= recent_tokens
+            )
+        request_ids = input_ids
+
+        first_follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        continuation_follow = torch.zeros_like(first_follow)
+        generated_current_ids = input_ids[:, positions]
+        for value_index in range(value_span):
+            key_pos = positions - value_offset - value_index
+            key_valid = key_pos >= 0
+            clipped_key_pos = key_pos.clamp(0, seq_len - 1)
+            key_ids = input_ids[:, clipped_key_pos]
+            matches = request_ids[:, None, :, None] == key_ids[:, None, None, :]
+            valid = (
+                request_valid[:, :, :, None]
+                & key_valid[None, None, None, :]
+                & source_region[:, :, None, :]
+                & source_not_stopped[:, None, None, :]
+            )
+            request_match = (matches & valid).to(dtype=first_follow.dtype).sum(dim=2)
+            if value_index == 0:
+                first_follow = first_follow + request_match
+                continue
+
+            source_prev_pos = (positions - 1).clamp_min(0)
+            source_prev_valid = positions > 0
+            source_prev_ids = input_ids[:, source_prev_pos]
+            prefix_matches = generated_current_ids[:, :, None] == source_prev_ids[:, None, :]
+            continuation_follow = continuation_follow + request_match * (
+                prefix_matches & source_prev_valid[None, None, :]
+            ).to(dtype=continuation_follow.dtype)
+
+        has_continuation = continuation_follow.sum(dim=-1, keepdim=True) > 0
+        first_follow = torch.where(has_continuation, torch.zeros_like(first_follow), first_follow)
+        first_denom = first_follow.sum(dim=-1, keepdim=True)
+        continuation_denom = continuation_follow.sum(dim=-1, keepdim=True)
+        first_probs = torch.where(
+            first_denom > 0,
+            first_follow / first_denom.clamp_min(1e-12),
+            torch.zeros_like(first_follow),
+        )
+        continuation_probs = torch.where(
+            continuation_denom > 0,
+            continuation_follow / continuation_denom.clamp_min(1e-12),
+            torch.zeros_like(continuation_follow),
+        )
+        return first_probs, continuation_probs
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -282,6 +386,25 @@ class CausalCopyHead(nn.Module):
                         float(self.config.key_follow_continuation_strength or self.config.key_follow_strength),
                     ),
                 ]:
+                    route_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
+                    route_probs_by_vocab.scatter_add_(dim=-1, index=index, src=route_probs_by_pos)
+                    route_logits = torch.log(route_probs_by_vocab.clamp_min(1e-12)) + route_strength
+                    copy_logits = torch.logaddexp(copy_logits, route_logits)
+            request_key_follow_probs_by_pos = self._request_key_follow_probs_by_pos(input_ids, source_mask)
+            if request_key_follow_probs_by_pos is not None:
+                first_follow_by_pos, continuation_follow_by_pos = request_key_follow_probs_by_pos
+                for route_probs_by_pos, route_strength in [
+                    (first_follow_by_pos, float(self.config.request_key_follow_strength)),
+                    (
+                        continuation_follow_by_pos,
+                        float(
+                            self.config.request_key_follow_continuation_strength
+                            or self.config.request_key_follow_strength
+                        ),
+                    ),
+                ]:
+                    if not route_strength:
+                        continue
                     route_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
                     route_probs_by_vocab.scatter_add_(dim=-1, index=index, src=route_probs_by_pos)
                     route_logits = torch.log(route_probs_by_vocab.clamp_min(1e-12)) + route_strength

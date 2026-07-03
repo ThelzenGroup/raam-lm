@@ -174,6 +174,60 @@ def test_causal_copy_head_key_follow_requires_recent_key_after_assistant_boundar
     assert out[0, 13, 201] > out[0, 13, 202]
 
 
+def test_causal_copy_head_request_key_follow_prefers_requested_value_before_assistant():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        request_key_follow_strength=10.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 12, 4)
+    input_ids = torch.tensor([[31, 9, 9, 201, 32, 9, 9, 202, 5, 31, 6, 8]])
+    lm_logits = torch.zeros(1, 12, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 11, 201] > out[0, 11, 202]
+
+
+def test_causal_copy_head_request_key_follow_continues_value_prefix():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        request_key_follow_strength=10.0,
+        request_key_follow_continuation_strength=12.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 17, 4)
+    input_ids = torch.tensor(
+        [[31, 9, 9, 201, 202, 203, 32, 9, 9, 204, 205, 206, 5, 31, 6, 8, 201]]
+    )
+    lm_logits = torch.zeros(1, 17, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 16, 202] > out[0, 16, 204]
+    assert out[0, 16, 202] > out[0, 16, 201]
+
+
 def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
     head = CausalCopyHead(d_model=4, vocab_size=32, config=config)
@@ -212,6 +266,34 @@ def test_causal_copy_head_key_follow_ignores_future_token_ids_for_earlier_logits
     changed = head(hidden, changed_future_ids, lm_logits)
 
     torch.testing.assert_close(base[:, :3], changed[:, :3])
+
+
+def test_causal_copy_head_request_key_follow_ignores_future_token_ids_for_earlier_logits():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=1,
+        key_follow_source_until_token_id=5,
+        request_key_follow_strength=10.0,
+        request_key_follow_continuation_strength=10.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 12, 4)
+    lm_logits = torch.zeros(1, 12, 256)
+    base_ids = torch.tensor([[31, 9, 9, 201, 32, 9, 9, 202, 5, 31, 6, 8]])
+    changed_future_ids = torch.tensor([[31, 9, 9, 201, 32, 9, 9, 99, 5, 32, 6, 8]])
+
+    base = head(hidden, base_ids, lm_logits)
+    changed = head(hidden, changed_future_ids, lm_logits)
+
+    torch.testing.assert_close(base[:, :7], changed[:, :7])
 
 
 def test_causal_copy_head_binding_carry_ignores_future_token_ids_for_earlier_logits():

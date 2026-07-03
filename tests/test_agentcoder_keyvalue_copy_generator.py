@@ -405,3 +405,21 @@ def test_keyvalue_key_follow_configs_enable_same_route():
         assert payload["copy_head"]["key_follow_separator_token_id"] == 275
         assert payload["copy_head"]["key_follow_recent_after_token_id"] == 6
         assert payload["copy_head"]["key_follow_stop_token_ids"] == [23]
+
+
+def test_keyvalue_request_value_configs_enable_request_route():
+    for path, model_name in [
+        ("configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml", "raam"),
+        ("configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml", "transformer"),
+    ]:
+        payload = yaml.safe_load(Path(path).read_text())
+
+        assert payload["model_name"] == model_name
+        assert payload["copy_head"]["enabled"] is True
+        assert payload["copy_head"]["key_follow_strength"] > 0
+        assert payload["copy_head"]["request_key_follow_strength"] > 0
+        assert payload["copy_head"]["request_key_follow_continuation_strength"] > 0
+        assert payload["copy_head"]["request_key_follow_recent_tokens"] == 64
+        assert payload["copy_head"]["request_key_follow_after_token_id"] == 5
+        assert payload["copy_head"]["request_key_follow_before_token_id"] == 6
+        assert payload["copy_head"]["request_key_follow_value_span"] == 32

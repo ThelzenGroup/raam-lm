@@ -1,0 +1,86 @@
+model_name: transformer
+vocab_size: 2048
+max_seq_len: 160
+d_model: 128
+n_layers: 4
+n_heads: 4
+n_kv_heads: 4
+d_ff: 512
+dropout: 0.0
+rope_base: 10000
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: []
+use_mamba_or_fallback_backbone: false
+use_dynamic_hourglass_compression: false
+use_anchor_preserved_local_global: false
+use_attention_islands: false
+use_curriculum_mtp: false
+copy_head:
+  enabled: true
+  d_copy: 128
+  logit_scale: 4.0
+  temperature: 1.0
+  include_current_token: true
+  key_follow_strength: 10.0
+  key_follow_continuation_strength: 0.0
+  key_follow_recent_tokens: 24
+  key_follow_value_offset: 3
+  key_follow_value_span: 1
+  key_follow_min_source_gap: 8
+  key_follow_source_until_token_id: 5
+  key_follow_align_value_offset: true
+  key_follow_match_value_prefix: true
+  key_follow_separator_token_id: 275
+  key_follow_recent_after_token_id: 6
+  key_follow_stop_token_ids: [23]
+  request_key_follow_strength: 12.0
+  request_key_follow_continuation_strength: 12.0
+  request_key_follow_recent_tokens: 64
+  request_key_follow_after_token_id: 5
+  request_key_follow_before_token_id: 6
+  request_key_follow_value_span: 32
+compression:
+  enabled: false
+  block_size: 8
+  anchors_per_block: 0
+  anchor_selection: learned_topk
+  token_id_anchor_count: 0
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  anchor_score_hidden: 64
+  recon_loss_weight: 0.0
+  recon_loss_start_step: 100000000
+  recon_loss_ramp_steps: 1000
+mtp:
+  enabled: false
+  max_horizon: 4
+  enabled_horizons: []
+  horizon_weights: {}
+  start_step: 100000000
+  horizon2_step: 100000000
+  horizon3_step: 100000000
+  horizon4_step: 100000000
+  ramp_steps: 1000
+train:
+  seed: 17
+  batch_size: 8
+  seq_len: 128
+  steps: 1600
+  lr: 0.001
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 10
+  cosine_decay: false
+  device: auto
+  dtype: auto
+  log_every: 25
+  eval_every: 100
+  save_every: 0
+  output_dir: runs/agentcoder_keyvalue_copy_gate/transformer_request_value/train
+eval:
+  eval_batches: 4
+  probe_lengths: [64, 128]
+  long_context_lengths: [160]

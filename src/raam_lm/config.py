@@ -73,6 +73,12 @@ class CopyHeadConfig:
     key_follow_separator_token_id: int = -1
     key_follow_recent_after_token_id: int = -1
     key_follow_stop_token_ids: list[int] = field(default_factory=list)
+    request_key_follow_strength: float = 0.0
+    request_key_follow_continuation_strength: float = 0.0
+    request_key_follow_recent_tokens: int = 0
+    request_key_follow_after_token_id: int = -1
+    request_key_follow_before_token_id: int = -1
+    request_key_follow_value_span: int = 1
 
 
 @dataclass
