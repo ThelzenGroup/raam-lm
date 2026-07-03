@@ -11,6 +11,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.make_agentcoder_keyvalue_copy_sft import COMPLETION_MODES
 from scripts.run_agentcoder_slotcopy_gate import read_last_train_row, summarize_ladder, summarize_slot_families
 
 
@@ -88,7 +89,7 @@ def main() -> None:
         choices=["mirror", "covered", "heldout", "ladder", "coverage_ladder"],
         default="ladder",
     )
-    parser.add_argument("--completion-mode", choices=["keyvalue", "key_only"], default="keyvalue")
+    parser.add_argument("--completion-mode", choices=COMPLETION_MODES, default="keyvalue")
     parser.add_argument("--train-records", type=int, default=96)
     parser.add_argument("--train-variants-per-row", type=int, default=1)
     parser.add_argument("--eval-cases", type=int, default=64)
