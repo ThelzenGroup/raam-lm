@@ -2133,3 +2133,143 @@ After artifact pull, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## AgentCoder Atomic Copy Gate
+
+Added the smallest copy control after the copy-only ladder still failed: a
+single slot family that copies only `symbol=<value>` and `file=<value>` from a
+no-decoy context. The runner mirrors packed validation by default.
+
+Added:
+
+- `scripts/make_agentcoder_atomic_copy_sft.py`
+- `scripts/run_agentcoder_atomic_copy_gate.py`
+- `configs/scratch/raam_agentcoder_atomic_copy_gate.yaml`
+- `configs/scratch/transformer_agentcoder_atomic_copy_gate.yaml`
+- `tests/test_agentcoder_atomic_copy_generator.py`
+
+Updated:
+
+- `docs/AGENTIC_CODING_EVALS.md` now documents the atomic copy control.
+- The atomic generator/runner now support `--train-records` and `--eval-cases`
+  so we can distinguish one-record overfit from multi-binding failure.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_atomic_copy_sft.py scripts/run_agentcoder_atomic_copy_gate.py scripts/eval_overfit_sanity.py scripts/make_agentcoder_copyonly_sft.py scripts/run_agentcoder_copy_gate.py
+rm -rf work/atomic_copy_smoke && python3 scripts/make_agentcoder_atomic_copy_sft.py --train-output work/atomic_copy_smoke/train.jsonl --cases-output work/atomic_copy_smoke/cases.json --manifest-output work/atomic_copy_smoke/manifest.json --eval-mode ladder
+python3 -m pytest -q tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_copyonly_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- ladder generator emitted `64` train records and `64` eval cases
+- focused local tests passed: `13 passed in 0.16s`
+- one-record generator mode emitted `1` train record and `4` ladder eval cases
+- one-record focused tests passed: `5 passed in 0.06s`
+- `git diff --check` passed
+
+Vast RTX 5090 validation, 64-pair mirror control:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_copyonly_generator.py tests/test_agentcoder_slotcopy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_copy_mirror_20260703T054229Z/raam \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_atomic_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_copy_mirror_20260703T054229Z/transformer \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote 64-pair mirror results:
+
+- focused atomic/copy/slot generator tests: `13 passed in 0.24s`
+- full remote test suite: `41 passed in 32.80s`
+- train records: `64`
+- eval cases: `32`
+- train tokens: `6272`
+- validation tokens: `6272`
+- `mirror_val: true`
+
+| Model | Mirror Exact Pass | Val Loss | Train Loss | Tokens Seen |
+| --- | ---: | ---: | ---: | ---: |
+| RAAM atomic mirror | 6 / 32 | 0.097215 | 0.088383 | 921600 |
+| Transformer atomic mirror | 0 / 32 | 0.192129 | 0.193607 | 921600 |
+
+Representative completion check:
+
+- RAAM prompt for `copy_symbol_000` returned `copy_symbol_056`.
+- Transformer prompt for multiple cases collapsed to `copy_symbol_015` /
+  `copy_file_003.py`.
+
+Vast RTX 5090 validation, one-record mirror control:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_copy_one_20260703T054652Z/raam \
+  --device cuda \
+  --clean \
+  --train-records 1 \
+  --eval-cases 1 \
+  --steps 400 \
+  --no-fail
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_atomic_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_copy_one_20260703T054652Z/transformer \
+  --device cuda \
+  --clean \
+  --train-records 1 \
+  --eval-cases 1 \
+  --steps 400 \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote one-record results:
+
+- focused atomic generator tests: `5 passed in 0.08s`
+- full remote test suite: `42 passed in 32.88s`
+- train records: `1`
+- eval cases: `1`
+- train tokens: `98`
+- validation tokens: `98`
+- `mirror_val: true`
+
+| Model | Mirror Exact Pass | Val Loss | Train Loss | Tokens Seen |
+| --- | ---: | ---: | ---: | ---: |
+| RAAM one-record atomic | 1 / 1 | 0.0000775 | 0.0000784 | 307200 |
+| Transformer one-record atomic | 1 / 1 | 0.0002455 | 0.0002557 | 307200 |
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_copy_mirror_20260703T054229Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_copy_one_20260703T054652Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: training/generation/eval plumbing can overfit one exact copy
+pair for both models. The failure begins when multiple possible bindings exist,
+even with no decoys and mirrored validation. The next useful step is a cardinality
+sweep over `--train-records` values such as `1,2,4,8,16,32,64` with mirrored
+eval. That will locate the point where exact binding breaks and tell us whether
+we need a data/objective change, a decoding/eval change, or a model-capacity
+change before returning to chat/coding training.
+
+After artifact pulls, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
