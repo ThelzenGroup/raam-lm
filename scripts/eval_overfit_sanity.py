@@ -220,7 +220,23 @@ def infer_behavior(completion: str) -> str:
     parsed_json = first_json_object(completion)
     if isinstance(parsed_json, dict):
         return "json_tool_command"
-    copy_markers = ["symbol=", "file=", "helper=", "return=", "literal=", "test="]
+    copy_markers = [
+        "symbol=",
+        "file=",
+        "helper=",
+        "return=",
+        "literal=",
+        "test=",
+        "module=",
+        "route=",
+        "fixture=",
+        "setting=",
+        "adapter=",
+        "service=",
+        "endpoint=",
+        "task=",
+        "parser=",
+    ]
     if any(marker in lower for marker in copy_markers):
         return "copy_slot_values"
     if "```diff" in lower or "--- a/" in lower or "+++ b/" in lower:
