@@ -917,3 +917,48 @@ does not improve on the exported step-800 checkpoint. The best artifact remains
 `3.0210490942001345`. A future continuation should either keep optimizer state
 from the best region or test an even lower LR; otherwise use the step-800 export
 for qualitative inspection and as the current base-LM candidate.
+
+## Stage 5 Qualitative Checkpoint Inspection
+
+Added `scripts/qualitative_checkpoint_inspect.py` and ran it on the current best
+model-only checkpoint, `stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z`
+step `800`.
+
+```bash
+cd /root/raam-lm
+/venv/main/bin/python scripts/qualitative_checkpoint_inspect.py \
+  --config configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+  --tokenizer /root/data/agentcoder_stage5/tokenizer.json \
+  --checkpoint /root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z/train/checkpoints/model_only_fp16.pt \
+  --device cuda \
+  --max-new-tokens 96 \
+  --temperature 0.8 \
+  --top-k 50 \
+  --seeds 17 \
+  --output-json /root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_qual_20260703T022622Z/qualitative_samples.json \
+  --output-md /root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_qual_20260703T022622Z/qualitative_samples.md
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_lr5e5_qual_20260703T022622Z`.
+The pull includes `qualitative_samples.json` and `qualitative_samples.md`; no
+checkpoint files were pulled. Both Vast RTX 5090 instances were verified
+`exited/stopped` after the pull.
+
+Qualitative evidence:
+
+| Prompt group | Samples | Useful completions | Valid JSON | Test-command mentions | EOS generated |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| chat/coding/software-engineering/agentic coding | 8 | 0 | 0 | 0 | 0 |
+
+The samples remain incoherent and mostly look like fragments of paths, symbols,
+and code-adjacent tokens. One completion tripped the loose diff-marker flag by
+emitting `---`, but it was not an applicable patch. This means the step-800
+checkpoint is the best measured base-LM artifact so far, not a usable chat or
+agentic coding model.
+
+Decision: do not start expensive full chat/coding training from this checkpoint
+as if it were ready. The next highest-value work is a data/tokenizer/objective
+sanity pass: verify chat templates and packing boundaries, inspect memorized
+training examples, add a small overfit test on curated chat/coding records, and
+only then run the next paid Stage 5 continuation or larger scratch run.
