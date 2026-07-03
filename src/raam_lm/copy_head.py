@@ -246,9 +246,13 @@ class CausalCopyHead(nn.Module):
         recent_tokens = max(0, int(self.config.request_key_follow_recent_tokens))
         request_after_token_id = int(self.config.request_key_follow_after_token_id)
         request_before_token_id = int(self.config.request_key_follow_before_token_id)
+        source_after_token_id = int(self.config.request_key_follow_source_after_token_id)
         query_after_token_id = int(self.config.request_key_follow_query_after_token_id)
         query_before_token_ids = [
             int(token_id) for token_id in self.config.request_key_follow_query_before_token_ids
+        ]
+        query_ignore_token_ids = [
+            int(token_id) for token_id in self.config.request_key_follow_query_ignore_token_ids
         ]
         prompt_suffix_tokens = max(0, int(self.config.request_key_follow_prompt_suffix_tokens))
         if request_after_token_id < 0 or request_before_token_id < 0:
@@ -264,6 +268,14 @@ class CausalCopyHead(nn.Module):
             min_source_gap=min_source_gap,
             source_until_token_id=source_until_token_id,
         )
+        if source_after_token_id >= 0:
+            source_after_positions = torch.where(
+                input_ids == source_after_token_id,
+                positions.unsqueeze(0),
+                torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+            )
+            last_source_after = torch.cummax(source_after_positions, dim=1).values
+            source_region = source_region & (positions[None, None, :] > last_source_after[:, :, None])
         source_not_stopped = torch.ones(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
         for token_id in stop_token_ids:
             source_not_stopped = source_not_stopped & (input_ids != token_id)
@@ -311,6 +323,11 @@ class CausalCopyHead(nn.Module):
                 torch.full((bsz, seq_len, seq_len), seq_len, device=input_ids.device, dtype=positions.dtype),
             ).amin(dim=-1)
             request_valid = request_valid & (request_pos[None, None, :] < first_query_stop[:, :, None])
+        if query_ignore_token_ids:
+            query_ignore_mask = torch.zeros(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+            for token_id in query_ignore_token_ids:
+                query_ignore_mask = query_ignore_mask | (input_ids == token_id)
+            request_valid = request_valid & ~query_ignore_mask[:, None, :]
         if recent_tokens:
             request_valid = request_valid & (
                 (last_request_before[:, :, None] - request_pos[None, None, :]) <= recent_tokens

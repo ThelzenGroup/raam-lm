@@ -41,8 +41,10 @@ copy_head:
   request_key_follow_before_token_id: 6
   request_key_follow_value_span: 32
   request_key_follow_eval_only: true
+  request_key_follow_source_after_token_id: 9
   request_key_follow_query_after_token_id: 271
   request_key_follow_query_before_token_ids: [273]
+  request_key_follow_query_ignore_token_ids: [23, 269, 272, 328]
   request_key_follow_prompt_suffix_tokens: 1
 compression:
   enabled: false

@@ -80,8 +80,10 @@ class CopyHeadConfig:
     request_key_follow_before_token_id: int = -1
     request_key_follow_value_span: int = 1
     request_key_follow_eval_only: bool = False
+    request_key_follow_source_after_token_id: int = -1
     request_key_follow_query_after_token_id: int = -1
     request_key_follow_query_before_token_ids: list[int] = field(default_factory=list)
+    request_key_follow_query_ignore_token_ids: list[int] = field(default_factory=list)
     request_key_follow_prompt_suffix_tokens: int = 0
 
 
