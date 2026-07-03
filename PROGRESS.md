@@ -1037,6 +1037,59 @@ or improving behavior accuracy (`9 / 10`). Lower validation loss alone is not a
 good enough signal, because v2 lowered validation loss while regressing exact
 held-out behavior.
 
+## AgentCoder Balanced-Curriculum Gate Run
+
+Started Vast instance `43634442` successfully and ran the balanced curated gate:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_balanced_20260703T034213Z \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation:
+
+- targeted generator test: `1 passed, 7 deselected in 1.50s`
+- full suite: `26 passed in 32.63s`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_balanced_20260703T034213Z`.
+
+Generated comparison report:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_balanced_20260703T034213Z.md`.
+
+| Metric | Curated v1 | Command-disambiguation v2 | Balanced v3 |
+| --- | ---: | ---: | ---: |
+| Held-out exact pass rate | 8 / 10 | 7 / 10 | 8 / 10 |
+| Behavior accuracy | 9 / 10 | 8 / 10 | 9 / 10 |
+| Train records | 60 | 73 | 96 |
+| Train tokens | 7679 | 8695 | 10567 |
+| Validation tokens | 1543 | 2049 | 2804 |
+| Final validation loss | 1.5991248786449432 | 0.7426003813743591 | 0.9329699128866196 |
+| Final tokens/sec | 68901.96115779184 | 83803.19876940553 | 66871.47363583921 |
+
+Balanced v3 matched the best exact and behavior result while using equalized
+behavior-family counts, but it did not beat the `8 / 10` exact-pass target.
+Failures:
+
+- `curated_debugging`: answered with an `is_nonempty` function completion
+  instead of the debugging process.
+- `curated_repo_lookup`: used the repo-context behavior but named `config.py`
+  instead of the expected `calc.py`.
+
+Interpretation: balancing removed the command/risky/flag regressions introduced
+by v2, but the tiny model still confuses nearby template slots when the same
+symbol names appear across behaviors. The next useful step is a collision-aware
+curated generator/eval split: avoid overlapping function names and filenames
+between train and held-out cases unless they are intentionally testing lookup,
+then add explicit negative examples for "debugging is not code completion" and
+"repo-context answers must cite the file containing the implementation."
+
 Results: targeted mirror-val test passed, script syntax passed, and the full
 test suite passed with `22 passed in 32.73s`.
 

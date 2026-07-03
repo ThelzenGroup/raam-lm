@@ -55,6 +55,8 @@ def infer_behavior(completion: str) -> str:
         return "risky_clarifying_question"
     if "python -m pytest -q" in lower or ("pytest" in lower and "run" in lower):
         return "test_command"
+    if "```python" in lower and "def " in lower:
+        return "function_completion"
     if "def is_even" in lower or "def is_odd" in lower or "return n % 2" in lower:
         return "function_completion"
     if "implemented in" in lower:
@@ -76,7 +78,7 @@ def infer_behavior(completion: str) -> str:
     return "unknown"
 
 
-def behavior_confusion(results: list[dict[str, Any]]) -> dict[str, Any]:
+def behavior_confusion(results: list[dict[str, Any]], *, prefer_stored_predictions: bool = False) -> dict[str, Any]:
     matrix: dict[str, dict[str, int]] = {}
     labeled = 0
     correct = 0
@@ -84,7 +86,10 @@ def behavior_confusion(results: list[dict[str, Any]]) -> dict[str, Any]:
         expected = row.get("expected_behavior") or CURATED_CASE_BEHAVIORS.get(str(row.get("name")))
         if expected is None:
             continue
-        predicted = row.get("predicted_behavior") or infer_behavior(str(row.get("completion", "")))
+        if prefer_stored_predictions:
+            predicted = row.get("predicted_behavior") or infer_behavior(str(row.get("completion", "")))
+        else:
+            predicted = infer_behavior(str(row.get("completion", "")))
         labeled += 1
         correct += int(expected == predicted)
         matrix.setdefault(expected, {})
@@ -104,19 +109,27 @@ def preview(text: str, limit: int = 180) -> str:
     return collapsed[: limit - 3] + "..."
 
 
-def summarize_run(run_dir: Path) -> dict[str, Any]:
+def summarize_run(run_dir: Path, *, prefer_stored_behavior: bool = False) -> dict[str, Any]:
     summary = read_json(run_dir / "summary.json")
     eval_path = run_dir / "curated_eval.json"
     eval_payload = read_json(eval_path)
     results = list(eval_payload.get("results", []))
-    confusion = {
-        "matrix": summary.get("behavior_confusion") or eval_payload.get("behavior_confusion"),
-        "accuracy": summary.get("behavior_accuracy") or eval_payload.get("behavior_accuracy"),
-        "correct_count": summary.get("behavior_correct_count") or eval_payload.get("behavior_correct_count"),
-        "labeled_cases": summary.get("behavior_labeled_cases") or eval_payload.get("behavior_labeled_cases"),
-    }
-    if confusion["matrix"] is None and results:
-        confusion = behavior_confusion(results)
+    if prefer_stored_behavior:
+        confusion = {
+            "matrix": summary.get("behavior_confusion") or eval_payload.get("behavior_confusion"),
+            "accuracy": summary.get("behavior_accuracy") or eval_payload.get("behavior_accuracy"),
+            "correct_count": summary.get("behavior_correct_count") or eval_payload.get("behavior_correct_count"),
+            "labeled_cases": summary.get("behavior_labeled_cases") or eval_payload.get("behavior_labeled_cases"),
+        }
+        if confusion["matrix"] is None and results:
+            confusion = behavior_confusion(results, prefer_stored_predictions=True)
+    else:
+        confusion = behavior_confusion(results) if results else {
+            "matrix": summary.get("behavior_confusion") or eval_payload.get("behavior_confusion"),
+            "accuracy": summary.get("behavior_accuracy") or eval_payload.get("behavior_accuracy"),
+            "correct_count": summary.get("behavior_correct_count") or eval_payload.get("behavior_correct_count"),
+            "labeled_cases": summary.get("behavior_labeled_cases") or eval_payload.get("behavior_labeled_cases"),
+        }
 
     failed_cases = []
     for row in results:
@@ -126,7 +139,11 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
             {
                 "name": row.get("name"),
                 "expected_behavior": row.get("expected_behavior") or CURATED_CASE_BEHAVIORS.get(str(row.get("name"))),
-                "predicted_behavior": row.get("predicted_behavior") or infer_behavior(str(row.get("completion", ""))),
+                "predicted_behavior": (
+                    row.get("predicted_behavior")
+                    if prefer_stored_behavior and row.get("predicted_behavior")
+                    else infer_behavior(str(row.get("completion", "")))
+                ),
                 "missing_required_substrings": row.get("missing_required_substrings", []),
                 "json_ok": row.get("json_ok"),
                 "completion_preview": preview(str(row.get("completion", ""))),
@@ -227,9 +244,14 @@ def main() -> None:
     parser.add_argument("run_dirs", nargs="+", help="Run directories containing summary.json and curated_eval.json.")
     parser.add_argument("--output-json", default="runs/agentcoder_gate_comparison.json")
     parser.add_argument("--output-md", default="runs/agentcoder_gate_comparison.md")
+    parser.add_argument(
+        "--prefer-stored-behavior",
+        action="store_true",
+        help="Use behavior labels saved in artifacts instead of recomputing with the current heuristic.",
+    )
     args = parser.parse_args()
 
-    rows = [summarize_run(Path(path)) for path in args.run_dirs]
+    rows = [summarize_run(Path(path), prefer_stored_behavior=args.prefer_stored_behavior) for path in args.run_dirs]
     payload = {"runs": rows}
 
     json_path = Path(args.output_json)

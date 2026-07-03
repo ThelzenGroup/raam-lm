@@ -99,3 +99,9 @@ def test_port_review_inference_beats_generic_valueerror():
     completion = "Validate that the value is numeric and between 1 and 65535; otherwise return a clear error instead of raw ValueError."
 
     assert infer_behavior(completion) == "code_review"
+
+
+def test_generic_python_function_infers_function_completion():
+    completion = "```python\ndef is_nonempty(items):\n    return len(items) > 0\n```"
+
+    assert infer_behavior(completion) == "function_completion"

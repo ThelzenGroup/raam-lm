@@ -225,6 +225,8 @@ def infer_behavior(completion: str) -> str:
         return "risky_clarifying_question"
     if "python -m pytest -q" in lower or ("pytest" in lower and "run" in lower):
         return "test_command"
+    if "```python" in lower and "def " in lower:
+        return "function_completion"
     if "def is_even" in lower or "def is_odd" in lower or "return n % 2" in lower:
         return "function_completion"
     if "implemented in" in lower:

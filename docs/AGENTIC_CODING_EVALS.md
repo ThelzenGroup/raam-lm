@@ -116,3 +116,7 @@ The report compares exact pass rate, validation loss, behavior accuracy, failed
 cases, and behavior confusions. This is useful for deciding whether a new
 curriculum actually improves held-out behavior or only lowers validation loss
 while shifting mistakes between behavior families.
+
+By default, the comparison script recomputes behavior labels from completions
+with the current heuristic. Pass `--prefer-stored-behavior` when you need to
+replay the labels saved inside the original artifact exactly.
