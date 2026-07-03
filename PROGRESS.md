@@ -591,3 +591,74 @@ compression-only Stage 5 setup with reconstruction and MTP disabled, but caps LR
 at `0.000075` with `warmup_steps: 500`. This is the next gate to test whether the
 post-500 validation drift keeps shrinking without slowing learning as much as a
 `5e-5` cap.
+
+## Stage 5 75e-6 LR Gate
+
+Pushed `9155b35` with
+`configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml` and
+`scripts/vast_launch_stage5_gate.sh`, then ran a bounded Vast RTX 5090 gate on
+the existing expanded Stage 5 packed corpus:
+
+```bash
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+RUN_ID=stage5_raam_agentcoder_100m_lr75e6_gate_20260703T010459Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml \
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_lr75e6_gate_20260703T010459Z`.
+The pull is about 1.9 MB and contains no `.pt` files. Both Vast RTX 5090
+instances were stopped/exited after the pull.
+
+75e-6 LR gate metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Last logged step | 1099 |
+| Tokens seen | 72089600 |
+| First validation loss | 10.388726663589477 |
+| Best validation loss | 3.0213409900665282 at step 600 |
+| Final validation loss | 3.237572705745697 |
+| Final train loss | 2.863391637802124 |
+| Final tokens/sec | 244333.9745951525 |
+| Peak allocated VRAM MB | 12630.3056640625 |
+| Non-embedding params | 67080706 |
+| Estimated FLOPs/token | 151132672 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 0 | 10.388726663589477 |
+| 100 | 6.9750683307647705 |
+| 200 | 5.547672200202942 |
+| 300 | 4.390269994735718 |
+| 400 | 3.6601709485054017 |
+| 500 | 3.136573326587677 |
+| 600 | 3.0213409900665282 |
+| 700 | 3.145030105113983 |
+| 800 | 3.1879626750946044 |
+| 900 | 3.167621982097626 |
+| 999 | 3.290269196033478 |
+| 1000 | 3.2663076400756834 |
+| 1099 | 3.237572705745697 |
+
+Interpretation: `lr75e6` is now the best Stage 5 schedule tested. It beats
+`lr1e4` on best validation (`3.0213` vs `3.0503`) and final validation (`3.2376`
+vs `3.3375`) while moving the best point from step 500 to step 600. Agentic
+scores remain zero, so this is base-LM stability evidence only. Full training is
+still not cleared. The next useful decision is either a `5e-5` gate to see whether
+the best point moves later again, or a short checkpoint-export run around the
+current step-600 best region for qualitative inspection.

@@ -241,6 +241,12 @@ EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
+The `lr75e6` gate is now the best measured Stage 5 schedule: best validation
+`3.0213` at step 600 and final validation `3.2376` at step 1099. This improves on
+the `lr1e4` gate, but agentic scores remain zero and validation still rises after
+the best point. Do not launch full training yet. The next gate should either test
+`5e-5` or export/check the step-600 region from the current best schedule.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

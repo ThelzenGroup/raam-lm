@@ -79,6 +79,13 @@ The next lower-LR candidate is
 `configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml`, which keeps the same
 loss and architecture settings as `lr1e4` but caps LR at `0.000075`.
 
+`lr75e6` gate evidence: this is now the best Stage 5 gate so far. It moved the
+best validation point later and lower, reaching `3.0213` at step 600 and ending
+at `3.2376` at step 1099. Agentic scores remain `0.0`, so this is still base-LM
+stability evidence only. The next useful branch is either a `5e-5` gate to test
+whether the best point moves later again, or a checkpoint-export run around the
+current step-600 best region for qualitative inspection.
+
 ## Ablations
 
 - No compression.
