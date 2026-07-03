@@ -158,6 +158,38 @@ def test_dataset_packing_writes_assistant_loss_masks(tmp_path):
     assert train_tokens.numel() == train_mask.numel()
 
 
+def test_pack_dataset_cli_forwards_assistant_loss_only(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    tok = tmp_path / "tokenizer.json"
+    packed = tmp_path / "packed_cli_masked"
+    write_tiny_agentic(data)
+    train_agent_tokenizer([data], vocab_size=384).save(tok)
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/pack_dataset.py",
+            str(data),
+            "--tokenizer",
+            str(tok),
+            "--output-dir",
+            str(packed),
+            "--seq-len",
+            "32",
+            "--val-fraction",
+            "0.5",
+            "--assistant-loss-only",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    manifest = json.loads((packed / "manifest.json").read_text())
+    assert manifest["assistant_loss_only"] is True
+    assert manifest["train_loss_tokens"] is not None
+    assert (packed / "train_loss_mask.bin").exists()
+
+
 def test_dataset_packing_skips_manifest_metadata(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()

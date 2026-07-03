@@ -39,7 +39,6 @@ def main() -> None:
             val_fraction=args.val_fraction,
             seed=args.seed,
             mirror_val=args.mirror_val,
-            assistant_loss_only=args.assistant_loss_only,
         )
     else:
         if args.tokenizer is None:
@@ -53,6 +52,7 @@ def main() -> None:
             val_fraction=args.val_fraction,
             seed=args.seed,
             mirror_val=args.mirror_val,
+            assistant_loss_only=args.assistant_loss_only,
         )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
