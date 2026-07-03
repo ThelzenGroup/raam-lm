@@ -2313,6 +2313,115 @@ the model cannot pass by memorizing one exact context layout, then rerun
 `coverage_ladder`. A good gate should first reach high `covered_value_slot`
 accuracy before spending more time on OOV byte-copy mechanics.
 
+## AgentCoder Key-Value Variant Training Gate
+
+Added `--train-variants-per-row` to the key-value copy generator and gate runner.
+Variant `0` preserves the old exact training record for each base row; additional
+variants reshuffle target keys, distractors, and repo-context order for the same
+underlying values. The goal is to remove the one-prompt-per-row memorization
+path exposed by the previous coverage ladder.
+
+Changed files:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+- `scripts/eval_overfit_sanity.py`
+- `scripts/run_agentcoder_slotcopy_gate.py`
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+rm -rf work/keyvalue_variant_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/keyvalue_variant_smoke/train.jsonl --cases-output work/keyvalue_variant_smoke/cases.json --manifest-output work/keyvalue_variant_smoke/manifest.json --eval-mode coverage_ladder --train-records 12 --train-variants-per-row 3 --eval-cases 4
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+python3 -m py_compile scripts/eval_overfit_sanity.py scripts/run_agentcoder_slotcopy_gate.py scripts/run_agentcoder_keyvalue_copy_gate.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- key-value generator file: `8 passed`
+- related copy-generator bundle: `38 passed`
+- evaluator/summary focused tests: `14 passed`
+- smoke manifest: 12 base train rows, 3 variants per row, 36 train records, 12
+  eval cases split evenly across `seen_slot`, `covered_value_slot`, and
+  `heldout_slot`
+- `git diff --check` passed
+
+Pushed:
+
+- `af75d4c Add key-value training variants`
+- `969c16f Track key sequence accuracy in copy eval`
+
+Remote Vast RTX 5090 setup:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_variant4_coverage_compare_20260703T105408Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_variant4_coverage_compare_20260703T105408Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --clean --no-fail
+```
+
+Remote focused tests: `25 passed, 8 deselected`.
+
+Variant-4 coverage ladder results:
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out Pass | Behavior Accuracy | Val Loss | Tokens/sec | Train Records |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM key-value key-follow | 1 / 96 | 1 / 32 | 0 / 32 | 0 / 32 | 96 / 96 | 0.600969 | 26344.7 | 384 |
+| Transformer key-value key-follow | 1 / 96 | 1 / 32 | 0 / 32 | 0 / 32 | 82 / 96 | 0.712969 | 26923.4 | 384 |
+
+The four-variant data removed the exact-layout memorization path but did not
+produce reusable key lookup under the 1600-step tiny schedule. Common failures
+switched from clean exact-prompt memorization to wrong requested key triplets.
+For example, a seen-row case requesting `service`, `file`, and `fixture` could
+produce `service`, `module`, and `setting`: valid-looking values from the same
+source row, but not the user-requested keys.
+
+Added key-sequence scoring to `scripts/eval_overfit_sanity.py` and re-scored
+the saved checkpoints without retraining:
+
+```bash
+/venv/main/bin/python scripts/eval_overfit_sanity.py ... --output /root/raam-lm/runs/agentcoder_keyvalue_variant4_coverage_compare_20260703T105408Z/raam/keyvalue_eval_keyseq.json --no-fail
+/venv/main/bin/python scripts/eval_overfit_sanity.py ... --output /root/raam-lm/runs/agentcoder_keyvalue_variant4_coverage_compare_20260703T105408Z/transformer/keyvalue_eval_keyseq.json --no-fail
+```
+
+Key-sequence results:
+
+| Model | Overall Key Sequence | Seen | Covered-Value | Held-Out/OOV |
+| --- | ---: | ---: | ---: | ---: |
+| RAAM key-value key-follow | 33 / 96 | 1 / 32 | 0 / 32 | 32 / 32 |
+| Transformer key-value key-follow | 1 / 96 | 1 / 32 | 0 / 32 | 0 / 32 |
+
+Interpretation:
+
+- RAAM can preserve the requested key order on the held-out/OOV tier, but still
+  fails value continuation there (`adapter=c`, `file=c`, etc.).
+- RAAM and Transformer both fail key selection on the covered-value tier, where
+  values are tokenizer-covered but the requested key combination/layout differs.
+- The next gate should split the problem explicitly: first train/evaluate
+  requested-key emission without values, then reintroduce value copying. Until
+  key-sequence accuracy is high on `covered_value_slot`, exact slot-copy pass
+  rates are a muddled signal.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_keyvalue_variant4_coverage_compare_20260703T105408Z`
+
+Checkpoint weights were not pulled.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
