@@ -2076,6 +2076,141 @@ collapses: either preserve all tokens for this tiny exact-copy control, add a
 deterministic special-token/string anchor policy, or add a slot-alignment loss
 before broader chat/coding training.
 
+## AgentCoder RAAM All-Anchor Cardinality Ceiling
+
+Added:
+
+- `configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml`
+
+Updated:
+
+- `docs/AGENTIC_CODING_EVALS.md` now includes the all-anchor ceiling command.
+- `tests/test_agentcoder_atomic_cardinality_sweep.py` now asserts the
+  all-anchor config sets `anchors_per_block == block_size`.
+
+This config keeps dynamic hourglass compression, preserved anchors, and
+attention islands enabled, but preserves every token in each compression block:
+
+- `attention_island_layers: [1, 2]`
+- `compression.block_size: 8`
+- `compression.anchors_per_block: 8`
+- `compression.pooled_chunks_per_block: 1`
+
+This is intentionally a diagnostic ceiling, not an efficient target model.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py scripts/make_agentcoder_atomic_copy_sft.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    comp = data['compression']
+    print(path, data['attention_island_layers'], data['use_anchor_preserved_local_global'], data['use_attention_islands'], comp['enabled'], comp['block_size'], comp['anchors_per_block'], data['train']['seq_len'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed: `15 passed in 0.08s`
+- config parse confirmed the all-anchor ablation uses `block_size: 8` and
+  `anchors_per_block: 8`
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_all_anchor_attention_20260703T064504Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_all_anchor_n64_steps2400_20260703T065102Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 4800 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_all_anchor_n64_steps4800_20260703T065403Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `15 passed in 0.11s`
+- remote config parse confirmed `[1, 2] 8 8 True`
+- full remote test suite passed after the runs: `52 passed in 32.99s`
+- eval policy: mirrored eval with eval cases matched to train-record count
+- `mirror_val: true`
+
+All-anchor sweep at the default `1200` training steps:
+
+| Bindings | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 4 | 4 / 4 | 0.029271 | 921600 |
+| 8 | 8 / 8 | 0.042089 | 921600 |
+| 16 | 15 / 16 | 0.046292 | 921600 |
+| 32 | 16 / 32 | 0.068097 | 921600 |
+| 64 | 2 / 64 | 0.108794 | 921600 |
+
+Focused `64`-binding longer-training probes:
+
+| Steps | Exact Pass | Val Loss | Tokens Seen |
+| ---: | ---: | ---: | ---: |
+| 1200 | 2 / 64 | 0.108794 | 921600 |
+| 2400 | 61 / 64 | 0.067554 | 1843200 |
+| 4800 | 64 / 64 | 0.065526 | 3686400 |
+
+Representative failures before the 4800-step run:
+
+- default all-anchor `n=16` had one wrong-slot failure:
+  expected `copy_symbol_013` / `copy_file_013.py`, completed
+  `copy_symbol_012` / `copy_file_012.py`.
+- default all-anchor `n=64` collapsed many prompts to `copy_symbol_016` /
+  `copy_file_016.py` or `copy_symbol_003` / `copy_file_003.py`.
+- at `2400` steps, the remaining `n=64` failures were still valid but wrong
+  seen pairs.
+- at `4800` steps, all `64` mirrored atomic bindings passed exactly.
+
+Local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_all_anchor_attention_20260703T064504Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_all_anchor_n64_steps2400_20260703T065102Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_all_anchor_n64_steps4800_20260703T065403Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: all-anchor attention proves RAAM can close the mirrored
+`64`-binding atomic copy gate when every token has an exact route and the tiny
+model gets enough optimization. The default `1200` steps underfit the heavier
+all-anchor route, but `4800` steps reached `64 / 64`. This separates the
+remaining useful-model work into two concrete tracks: make anchor selection
+cheap and deterministic enough that the efficient partial-anchor route behaves
+like the all-anchor ceiling, and keep broad chat/coding training blocked until
+the efficient route passes the same exact-binding gate without needing to
+preserve every token.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
