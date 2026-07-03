@@ -101,6 +101,12 @@ compact `model_only_fp16.pt` checkpoint for qualitative inspection and future
 resume/scaling work. This checkpoint is evidence of the current best measured
 base-LM region, not evidence of useful chat or coding ability.
 
+Model-only continuation evidence: resuming from the step-800 model-only export
+with a fresh optimizer is technically viable, but the `801 -> 1200` continuation
+did not beat the exported step-800 validation. The resumed gate reached best
+validation `3.1120` at step 900 and ended at `3.1592`, so the step-800 export
+remains the best artifact.
+
 ## Ablations
 
 - No compression.

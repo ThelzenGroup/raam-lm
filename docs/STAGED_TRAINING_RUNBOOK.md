@@ -293,6 +293,12 @@ manifest recorded `resume_mode: model_only`, `resume_optimizer_loaded: false`, a
 `resume_start_step: 801`, then logged training steps 801-804. Treat that smoke as
 tooling validation only; it used a tiny eval setting and is not a quality gate.
 
+A normal-eval `801 -> 1200` model-only continuation gate also completed. It was
+stable but did not improve over the exported step-800 checkpoint: best resumed
+validation was `3.1120` at step 900 and final validation was `3.1592`. Keep the
+step-800 export as the current best artifact unless a future optimizer-resumable
+or lower-LR continuation beats it.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

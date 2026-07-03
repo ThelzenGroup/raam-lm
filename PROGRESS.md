@@ -853,3 +853,67 @@ checkpoint can seed further training with a fresh optimizer. The validation
 numbers are not a quality result because the smoke used `EVAL_BATCHES=1` and only
 four training steps. The next quality gate should use the same model-only start
 with normal eval batches and a longer continuation window.
+
+## Stage 5 Model-Only Continuation Gate
+
+Ran a normal-eval continuation gate from the exported step-800 model-only
+checkpoint:
+
+```bash
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+RUN_ID=stage5_raam_agentcoder_100m_model_only_continue_20260703T021343Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+START_CHECKPOINT=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z/train/checkpoints/model_only_fp16.pt \
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+STEPS=1201 RESUME_STEPS=1201 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_model_only_continue_20260703T021343Z`.
+The pull is about 1.2 MB and contains no `.pt` files. Both Vast RTX 5090
+instances were stopped/exited after the pull.
+
+Manifest evidence:
+
+- `resume_mode: model_only`
+- `resume_optimizer_loaded: false`
+- `resume_start_step: 801`
+
+Continuation metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Logged steps | 400 |
+| First logged step | 801 |
+| Last logged step | 1200 |
+| Best resumed validation loss | 3.111972713470459 at step 900 |
+| Final validation loss | 3.159172797203064 |
+| Final train loss | 2.3228018283843994 |
+| Final tokens/sec | 244426.19807304617 |
+| Peak allocated VRAM MB | 12309.60498046875 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 900 | 3.111972713470459 |
+| 1000 | 3.1630563139915466 |
+| 1100 | 3.1767639040946962 |
+| 1200 | 3.159172797203064 |
+
+Interpretation: model-only continuation with a fresh optimizer is viable, but it
+does not improve on the exported step-800 checkpoint. The best artifact remains
+`stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z` at validation
+`3.0210490942001345`. A future continuation should either keep optimizer state
+from the best region or test an even lower LR; otherwise use the step-800 export
+for qualitative inspection and as the current base-LM candidate.
