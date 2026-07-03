@@ -424,3 +424,6 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["copy_head"]["request_key_follow_before_token_id"] == 6
         assert payload["copy_head"]["request_key_follow_value_span"] == 32
         assert payload["copy_head"]["request_key_follow_eval_only"] is True
+        assert payload["copy_head"]["request_key_follow_query_after_token_id"] == 271
+        assert payload["copy_head"]["request_key_follow_query_before_token_ids"] == [273]
+        assert payload["copy_head"]["request_key_follow_prompt_suffix_tokens"] == 1

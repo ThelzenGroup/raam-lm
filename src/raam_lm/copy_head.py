@@ -246,6 +246,11 @@ class CausalCopyHead(nn.Module):
         recent_tokens = max(0, int(self.config.request_key_follow_recent_tokens))
         request_after_token_id = int(self.config.request_key_follow_after_token_id)
         request_before_token_id = int(self.config.request_key_follow_before_token_id)
+        query_after_token_id = int(self.config.request_key_follow_query_after_token_id)
+        query_before_token_ids = [
+            int(token_id) for token_id in self.config.request_key_follow_query_before_token_ids
+        ]
+        prompt_suffix_tokens = max(0, int(self.config.request_key_follow_prompt_suffix_tokens))
         if request_after_token_id < 0 or request_before_token_id < 0:
             return None
 
@@ -281,6 +286,31 @@ class CausalCopyHead(nn.Module):
             & (request_pos[None, None, :] < last_request_before[:, :, None])
             & (request_pos[None, None, :] <= positions[None, :, None])
         )
+        query_start = last_request_after
+        if query_after_token_id >= 0:
+            query_after_positions = torch.where(
+                input_ids == query_after_token_id,
+                positions.unsqueeze(0),
+                torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+            )
+            last_query_after = torch.cummax(query_after_positions, dim=1).values
+            query_start = torch.maximum(query_start, last_query_after)
+            request_valid = request_valid & (request_pos[None, None, :] > query_start[:, :, None])
+        if query_before_token_ids:
+            query_stop_mask = torch.zeros(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+            for token_id in query_before_token_ids:
+                query_stop_mask = query_stop_mask | (input_ids == token_id)
+            query_stop_candidates = (
+                query_stop_mask[:, None, :]
+                & (positions[None, None, :] > query_start[:, :, None])
+                & (positions[None, None, :] < last_request_before[:, :, None])
+            )
+            first_query_stop = torch.where(
+                query_stop_candidates,
+                positions.view(1, 1, seq_len),
+                torch.full((bsz, seq_len, seq_len), seq_len, device=input_ids.device, dtype=positions.dtype),
+            ).amin(dim=-1)
+            request_valid = request_valid & (request_pos[None, None, :] < first_query_stop[:, :, None])
         if recent_tokens:
             request_valid = request_valid & (
                 (last_request_before[:, :, None] - request_pos[None, None, :]) <= recent_tokens
@@ -311,8 +341,11 @@ class CausalCopyHead(nn.Module):
             source_prev_valid = positions > 0
             source_prev_ids = input_ids[:, source_prev_pos]
             prefix_matches = generated_current_ids[:, :, None] == source_prev_ids[:, None, :]
+            continuation_target_valid = positions.unsqueeze(0) > (
+                last_request_before + prompt_suffix_tokens
+            )
             continuation_follow = continuation_follow + request_match * (
-                prefix_matches & source_prev_valid[None, None, :]
+                prefix_matches & source_prev_valid[None, None, :] & continuation_target_valid[:, :, None]
             ).to(dtype=continuation_follow.dtype)
 
         has_continuation = continuation_follow.sum(dim=-1, keepdim=True) > 0

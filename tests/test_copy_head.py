@@ -228,6 +228,36 @@ def test_causal_copy_head_request_key_follow_continues_value_prefix():
     assert out[0, 16, 202] > out[0, 16, 201]
 
 
+def test_causal_copy_head_request_key_follow_uses_query_window_and_prompt_suffix():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        request_key_follow_strength=10.0,
+        request_key_follow_continuation_strength=12.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+        request_key_follow_query_after_token_id=8,
+        request_key_follow_query_before_token_ids=[9],
+        request_key_follow_prompt_suffix_tokens=1,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 17, 4)
+    input_ids = torch.tensor([[31, 7, 7, 201, 32, 7, 7, 202, 5, 99, 32, 8, 31, 9, 100, 6, 10]])
+    lm_logits = torch.zeros(1, 17, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 16, 201] > out[0, 16, 202]
+    assert out[0, 16, 201] > out[0, 16, 31]
+
+
 def test_causal_copy_head_request_key_follow_eval_only_skips_train_route():
     config = CopyHeadConfig(
         enabled=True,
