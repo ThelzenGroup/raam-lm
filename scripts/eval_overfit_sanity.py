@@ -450,18 +450,22 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     expected_behavior = case.get("expected_behavior")
     predicted_behavior = infer_behavior(completion)
     expected_keys = expected_key_sequence(case)
-    generated_keys = generated_key_sequence(completion, allowed_keys=expected_keys) if expected_keys is not None else None
-    key_sequence_correct = generated_keys == expected_keys if expected_keys is not None else None
     expected_values = expected_value_sequence(case)
-    generated_values = generated_value_sequence(completion) if expected_values is not None else None
-    value_sequence_correct = generated_values == expected_values if expected_values is not None else None
+    enforce_key_sequence = bool(case.get("enforce_key_sequence", expected_keys is not None))
+    enforce_value_sequence = bool(case.get("enforce_value_sequence", False))
+    generated_keys = (
+        generated_key_sequence(completion, allowed_keys=expected_keys)
+        if expected_keys is not None and enforce_key_sequence
+        else None
+    )
+    key_sequence_correct = generated_keys == expected_keys if generated_keys is not None else None
+    generated_values = generated_value_sequence(completion) if expected_values is not None and enforce_value_sequence else None
+    value_sequence_correct = generated_values == expected_values if generated_values is not None else None
     if expected_behavior == "copy_key_sequence" and generated_keys and predicted_behavior == "unknown":
         predicted_behavior = "copy_key_sequence"
     if expected_behavior == "copy_value_sequence" and generated_values and predicted_behavior == "unknown":
         predicted_behavior = "copy_value_sequence"
     behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
-    enforce_key_sequence = bool(case.get("enforce_key_sequence", expected_keys is not None))
-    enforce_value_sequence = bool(case.get("enforce_value_sequence", False))
     passed = not missing and not present_forbidden and (json_ok is not False)
     if enforce_key_sequence:
         passed = passed and key_sequence_correct is True
