@@ -45,6 +45,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["return a + b", "pytest tests/test_calc.py -q"],
+        "expected_behavior": "patch_addition",
     },
     {
         "name": "json_tool_call",
@@ -59,6 +60,7 @@ CASES = [
         ),
         "required_substrings": ["find . -name '*.py' -type f"],
         "expected_json": {"cmd": "find . -name '*.py' -type f"},
+        "expected_behavior": "json_tool_command",
     },
     {
         "name": "clarifying_question",
@@ -72,6 +74,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["Which production file", "rollback", "test command"],
+        "expected_behavior": "risky_clarifying_question",
     },
     {
         "name": "plain_debugging",
@@ -85,6 +88,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["failing assertion", "reproduce", "smallest code change"],
+        "expected_behavior": "plain_debugging",
     },
     {
         "name": "function_completion",
@@ -101,6 +105,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["def is_even(n):", "return n % 2 == 0"],
+        "expected_behavior": "function_completion",
     },
     {
         "name": "stack_trace",
@@ -115,6 +120,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["string 'abc'", "int()", "validate before conversion"],
+        "expected_behavior": "stack_trace_diagnosis",
     },
     {
         "name": "repo_context",
@@ -140,6 +146,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["add is implemented in calc.py"],
+        "expected_behavior": "repo_context_lookup",
     },
     {
         "name": "test_command",
@@ -153,6 +160,7 @@ CASES = [
             "<|assistant|>\n"
         ),
         "required_substrings": ["python -m pytest -q"],
+        "expected_behavior": "test_command",
     },
 ]
 
@@ -179,6 +187,8 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
         }
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
+        if "expected_behavior" in case:
+            item["expected_behavior"] = str(case["expected_behavior"])
         cases.append(item)
     if not cases:
         raise ValueError("case file did not contain any cases")
@@ -193,6 +203,69 @@ def first_json_object(text: str) -> Any | None:
             except Exception:
                 continue
     return None
+
+
+def infer_behavior(completion: str) -> str:
+    lower = completion.lower()
+    parsed_json = first_json_object(completion)
+    if isinstance(parsed_json, dict):
+        return "json_tool_command"
+    if "```diff" in lower or "--- a/" in lower or "+++ b/" in lower:
+        if (
+            "is_enabled" in lower
+            or "feature" in lower
+            or "flag" in lower
+            or "== 'true'" in lower
+            or '== "true"' in lower
+            or "enabled value" in lower
+        ):
+            return "patch_boolean_flag"
+        return "patch_addition"
+    if "which file" in lower and ("rollback" in lower or "test command" in lower or "test" in lower):
+        return "risky_clarifying_question"
+    if "python -m pytest -q" in lower or ("pytest" in lower and "run" in lower):
+        return "test_command"
+    if "def is_even" in lower or "def is_odd" in lower or "return n % 2" in lower:
+        return "function_completion"
+    if "implemented in" in lower:
+        return "repo_context_lookup"
+    if "reproduce" in lower and ("assertion" in lower or "smallest" in lower):
+        return "plain_debugging"
+    if (
+        "valueerror" in lower
+        or "int()" in lower
+        or "validate before conversion" in lower
+        or "keyerror" in lower
+        or "filenotfounderror" in lower
+    ):
+        return "stack_trace_diagnosis"
+    if "65535" in lower or ("numeric" in lower and "port" in lower):
+        return "code_review"
+    if "commit" in lower and ("summary" in lower or "message" in lower):
+        return "commit_summary"
+    return "unknown"
+
+
+def build_behavior_confusion(results: list[dict[str, Any]]) -> dict[str, Any]:
+    matrix: dict[str, dict[str, int]] = {}
+    labeled = 0
+    correct = 0
+    for row in results:
+        expected = row.get("expected_behavior")
+        predicted = row.get("predicted_behavior")
+        if expected is None or predicted is None:
+            continue
+        labeled += 1
+        if expected == predicted:
+            correct += 1
+        matrix.setdefault(str(expected), {})
+        matrix[str(expected)][str(predicted)] = matrix[str(expected)].get(str(predicted), 0) + 1
+    return {
+        "matrix": {expected: dict(sorted(predicted.items())) for expected, predicted in sorted(matrix.items())},
+        "labeled_cases": labeled,
+        "correct_count": correct,
+        "accuracy": correct / labeled if labeled else None,
+    }
 
 
 def sample_next_token(logits: torch.Tensor, temperature: float, top_k: int) -> int:
@@ -249,12 +322,18 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     expected_json = case.get("expected_json")
     parsed_json = first_json_object(completion) if expected_json is not None else None
     json_ok = parsed_json == expected_json if expected_json is not None else None
+    expected_behavior = case.get("expected_behavior")
+    predicted_behavior = infer_behavior(completion)
+    behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
     passed = not missing and (json_ok is not False)
     return {
         "missing_required_substrings": missing,
         "expected_json": expected_json,
         "parsed_json": parsed_json,
         "json_ok": json_ok,
+        "expected_behavior": expected_behavior,
+        "predicted_behavior": predicted_behavior,
+        "behavior_correct": behavior_correct,
         "passed": passed,
     }
 
@@ -308,6 +387,7 @@ def main() -> None:
         )
 
     passed = sum(1 for row in results if row["passed"])
+    behavior_confusion = build_behavior_confusion(results)
     payload = {
         "metadata": {
             "config": args.config,
@@ -325,12 +405,21 @@ def main() -> None:
         "pass_count": passed,
         "case_count": len(results),
         "pass_rate": passed / len(results),
+        "behavior_confusion": behavior_confusion["matrix"],
+        "behavior_labeled_cases": behavior_confusion["labeled_cases"],
+        "behavior_correct_count": behavior_confusion["correct_count"],
+        "behavior_accuracy": behavior_confusion["accuracy"],
         "results": results,
     }
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps({k: payload[k] for k in ["pass_count", "case_count", "pass_rate"]}, indent=2))
+    print(
+        json.dumps(
+            {k: payload[k] for k in ["pass_count", "case_count", "pass_rate", "behavior_accuracy"]},
+            indent=2,
+        )
+    )
     if not args.no_fail and payload["pass_rate"] < args.min_pass_rate:
         raise SystemExit(1)
 

@@ -82,12 +82,18 @@ python scripts/run_agentcoder_curated_gate.py \
   --clean
 ```
 
-This gate generates deterministic synthetic SFT records with multiple
-paraphrases per target behavior, then evaluates separate held-out prompts. It
-covers bug-fix patches, strict JSON command output, risky-edit clarification,
-plain debugging, function completion, stack-trace diagnosis, repo-context lookup,
-test-command recommendation, command-intent disambiguation, code review, and
-commit summaries.
+This gate generates deterministic synthetic SFT records with balanced behavior
+coverage, then evaluates separate held-out prompts. It covers bug-fix patches,
+strict JSON command output, risky-edit clarification, plain debugging, function
+completion, stack-trace diagnosis, repo-context lookup, test-command
+recommendation, command-intent disambiguation, code review, boolean-flag patching,
+and commit summaries.
+
+The eval summary also reports a behavior confusion matrix. Exact pass/fail still
+comes from required substrings and expected JSON, but the confusion matrix shows
+whether a failed answer looked like the wrong behavior family, for example
+answering a risky-edit question with a JSON command or answering a boolean-flag
+patch prompt with a generic addition patch.
 
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before

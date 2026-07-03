@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 from pathlib import Path
 import subprocess
@@ -135,9 +136,11 @@ def test_curated_sft_generator_has_behavior_coverage():
     cases = build_eval_cases()
     behaviors = {row["behavior"] for row in records}
     case_names = {row["name"] for row in cases}
+    behavior_counts = Counter(row["behavior"] for row in records)
 
-    assert len(records) >= 60
-    assert len(cases) >= 8
+    assert len(records) == 96
+    assert len(cases) == 10
+    assert set(behavior_counts.values()) == {8}
     assert {
         "patch_addition",
         "json_tool_command",
@@ -148,12 +151,16 @@ def test_curated_sft_generator_has_behavior_coverage():
         "repo_context_lookup",
         "test_command",
         "command_disambiguation",
+        "patch_boolean_flag",
+        "code_review",
+        "commit_summary",
     }.issubset(behaviors)
     assert {
         "curated_json_python_files",
         "curated_risky_question",
         "curated_is_even_completion",
     }.issubset(case_names)
+    assert all("expected_behavior" in row for row in cases)
 
 
 def test_train_resume_generate_and_agentic_eval(tmp_path):

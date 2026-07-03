@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 import json
 from pathlib import Path
 from typing import Any
 
 
 SYSTEM = "You are RAAM-AgentCoder, a concise software-engineering assistant."
+BALANCED_BEHAVIOR_TARGET = 8
 
 
 def record(
@@ -32,8 +33,20 @@ def record(
     return item
 
 
-def case(name: str, prompt: str, required: list[str], expected_json: Any | None = None) -> dict[str, Any]:
-    item = {"name": name, "prompt": prompt, "required_substrings": required}
+def case(
+    name: str,
+    prompt: str,
+    required: list[str],
+    *,
+    expected_behavior: str,
+    expected_json: Any | None = None,
+) -> dict[str, Any]:
+    item = {
+        "name": name,
+        "prompt": prompt,
+        "required_substrings": required,
+        "expected_behavior": expected_behavior,
+    }
     if expected_json is not None:
         item["expected_json"] = expected_json
     return item
@@ -58,6 +71,25 @@ def patch_text(path: str, before: str, after: str, header: str) -> str:
         f"+{after}\n"
         "```"
     )
+
+
+def balance_records(records: list[dict[str, Any]], target_per_behavior: int = BALANCED_BEHAVIOR_TARGET) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in records:
+        grouped[str(row["behavior"])].append(row)
+
+    underfilled = {
+        behavior: len(rows)
+        for behavior, rows in sorted(grouped.items())
+        if len(rows) < target_per_behavior
+    }
+    if underfilled:
+        raise ValueError(f"not enough examples for balanced curriculum: {underfilled}")
+
+    balanced: list[dict[str, Any]] = []
+    for behavior in sorted(grouped):
+        balanced.extend(grouped[behavior][:target_per_behavior])
+    return balanced
 
 
 def build_train_records() -> list[dict[str, Any]]:
@@ -95,6 +127,12 @@ def build_train_records() -> list[dict[str, Any]]:
     flag_variants = [
         ("flags.py", "def is_enabled(value):\n    return value == 'false'", "def is_enabled(value):\n    return value == 'true'"),
         ("settings.py", "def feature_on(raw):\n    return raw == 'off'", "def feature_on(raw):\n    return raw == 'on'"),
+        ("env_flags.py", "def debug_mode(raw):\n    return raw == 'disabled'", "def debug_mode(raw):\n    return raw == 'enabled'"),
+        ("feature_flags.py", "def allows_signup(flag):\n    return flag == 'blocked'", "def allows_signup(flag):\n    return flag == 'allowed'"),
+        ("permissions.py", "def can_delete(role):\n    return role == 'viewer'", "def can_delete(role):\n    return role == 'admin'"),
+        ("toggles.py", "def cache_enabled(value):\n    return value == 'off'", "def cache_enabled(value):\n    return value == 'on'"),
+        ("account.py", "def is_active(status):\n    return status == 'disabled'", "def is_active(status):\n    return status == 'active'"),
+        ("rollout.py", "def rollout_enabled(value):\n    return value == 'no'", "def rollout_enabled(value):\n    return value == 'yes'"),
     ]
     for path, before, after in flag_variants:
         records.append(
@@ -128,6 +166,26 @@ def build_train_records() -> list[dict[str, Any]]:
             "Return a JSON command that searches for TODO comments.",
             {"cmd": "grep -R \"TODO\" -n src tests"},
             "The command searches source and tests for TODO comments.",
+        ),
+        (
+            "Return JSON for listing YAML configs.",
+            {"cmd": "find configs -type f -name '*.yaml'"},
+            "The command lists YAML config files.",
+        ),
+        (
+            "Return strict JSON with a command that prints git status.",
+            {"cmd": "git status --short"},
+            "The command prints concise git status.",
+        ),
+        (
+            "Respond with JSON for finding test files.",
+            {"cmd": "find tests -type f -name 'test_*.py'"},
+            "The command finds Python test files.",
+        ),
+        (
+            "Give a JSON object for searching FIXME markers.",
+            {"cmd": "grep -R \"FIXME\" -n src tests"},
+            "The command searches source and tests for FIXME markers.",
         ),
     ]
     for user, payload, final in json_commands:
@@ -183,6 +241,8 @@ def build_train_records() -> list[dict[str, Any]]:
         "Before changing deployment code, what must you ask?",
         "A production config edit could break login. Ask one concise question first.",
         "Before modifying a risky file, ask about the target and rollback plan.",
+        "Before changing authentication middleware in production, ask one concise question.",
+        "Before editing a live billing migration, what single question do you ask?",
     ]
     risky_answer = "Which file should I edit, and what test command or rollback command should I use if the change behaves unexpectedly?"
     for user in risky_prompts:
@@ -203,6 +263,8 @@ def build_train_records() -> list[dict[str, Any]]:
         "A regression test is red. What steps do you take before changing code?",
         "Before fixing a failed unit test, what do you inspect?",
         "A test expected 5 but got -1. How do you reason before editing?",
+        "A CLI command fails only in CI. Explain your debugging order before editing.",
+        "A patch broke one focused pytest. What do you inspect first?",
     ]
     debugging_answer = (
         "I reproduce the failing test, read the assertion and error, inspect the smallest changed code path, "
@@ -282,6 +344,10 @@ def build_train_records() -> list[dict[str, Any]]:
         ("add", "app.py", "from calc import add\nprint(add(2, 3))", "calc.py", "def add(a, b):\n    return a + b"),
         ("parse_port", "server.py", "from config import parse_port\nPORT = parse_port('8080')", "config.py", "def parse_port(value):\n    return int(value)"),
         ("load_settings", "cli.py", "from settings import load_settings", "settings.py", "def load_settings(path):\n    return {'path': path}"),
+        ("validate_email", "web.py", "from validators import validate_email", "validators.py", "def validate_email(value):\n    return '@' in value"),
+        ("render_invoice", "routes.py", "from invoices import render_invoice", "invoices.py", "def render_invoice(invoice):\n    return str(invoice)"),
+        ("build_parser", "main.py", "from cli_parser import build_parser", "cli_parser.py", "def build_parser():\n    return object()"),
+        ("save_user", "views.py", "from storage import save_user", "storage.py", "def save_user(user):\n    return user['id']"),
     ]
     for func, import_file, import_code, impl_file, impl_code in repo_variants:
         repo = f"file: {import_file}\n```python\n{import_code}\n```\nfile: {impl_file}\n```python\n{impl_code}\n```"
@@ -333,11 +399,53 @@ def build_train_records() -> list[dict[str, Any]]:
                 system_suffix="Review code for edge cases.",
             )
         )
+    extra_review_prompts = [
+        (
+            "Review this divider:\n```python\ndef divide(a, b):\n    return a / b\n```",
+            "Check for division by zero and define how callers should receive that error.",
+            "Add zero-denominator handling.",
+        ),
+        (
+            "Review this loader:\n```python\ndef read_json(path):\n    return json.load(open(path))\n```",
+            "Handle missing files, close the file with a context manager, and report JSONDecodeError clearly.",
+            "Handle file and JSON parsing failures.",
+        ),
+        (
+            "Review this lookup:\n```python\ndef get_user(users, user_id):\n    return users[user_id]\n```",
+            "Handle missing users explicitly instead of leaking a raw KeyError.",
+            "Handle missing user ids.",
+        ),
+        (
+            "Review this slug helper:\n```python\ndef slug(text):\n    return text.lower().replace(' ', '-')\n```",
+            "Validate empty input and normalize repeated separators before returning a slug.",
+            "Validate empty slugs and separator normalization.",
+        ),
+        (
+            "Review this pagination helper:\n```python\ndef page(items, limit):\n    return items[:limit]\n```",
+            "Validate that limit is positive and capped so callers cannot request unbounded work.",
+            "Validate and cap pagination limits.",
+        ),
+    ]
+    for user, answer, final in extra_review_prompts:
+        records.append(
+            record(
+                "code_review",
+                user,
+                answer,
+                final,
+                system_suffix="Review code for edge cases.",
+            )
+        )
 
     summary_prompts = [
         ("Write a one-sentence commit summary for fixing parse_port validation.", "Validate parse_port input and reject out-of-range ports."),
         ("Summarize a patch that changes add from subtraction to addition.", "Fix add to return the sum instead of the difference."),
         ("Write a concise commit message for adding JSON command validation.", "Validate JSON command responses in agentic evals."),
+        ("Write a commit summary for adding rollback checks before risky edits.", "Ask for rollback checks before changing risky production files."),
+        ("Summarize a patch that fixes an inverted feature flag.", "Fix inverted feature-flag comparisons."),
+        ("Write a concise commit message for improving stack trace diagnostics.", "Improve stack-trace diagnosis for invalid inputs."),
+        ("Summarize a change that adds balanced eval behavior counts.", "Balance AgentCoder eval behavior coverage."),
+        ("Write a commit summary for adding repo-context lookup tests.", "Add repo-context lookup coverage for AgentCoder evals."),
     ]
     for user, answer in summary_prompts:
         records.append(
@@ -350,7 +458,7 @@ def build_train_records() -> list[dict[str, Any]]:
             )
         )
 
-    return records
+    return balance_records(records)
 
 
 def build_eval_cases() -> list[dict[str, Any]]:
@@ -363,27 +471,32 @@ def build_eval_cases() -> list[dict[str, Any]]:
                 "file: calc.py\n```python\ndef add(a, b):\n    return a - b\n```",
             ),
             ["return a + b", "pytest"],
+            expected_behavior="patch_addition",
         ),
         case(
             "curated_json_python_files",
             chat_prompt("Return valid JSON when asked for JSON.", "Return JSON for a shell command that lists Python files."),
             ["*.py"],
-            {"cmd": "find . -type f -name '*.py'"},
+            expected_behavior="json_tool_command",
+            expected_json={"cmd": "find . -type f -name '*.py'"},
         ),
         case(
             "curated_risky_question",
             chat_prompt("Ask before risky edits.", "Before editing production payment code, ask one concise question."),
             ["file", "test", "rollback"],
+            expected_behavior="risky_clarifying_question",
         ),
         case(
             "curated_debugging",
             chat_prompt("Explain debugging steps plainly.", "A Python unit test is failing. Explain what to check before changing code."),
             ["reproduce", "assertion", "smallest"],
+            expected_behavior="plain_debugging",
         ),
         case(
             "curated_is_even_completion",
             chat_prompt("Complete Python functions safely.", "Complete this function:\n```python\ndef is_even(n):\n```"),
             ["def is_even(n):", "return n % 2 == 0"],
+            expected_behavior="function_completion",
         ),
         case(
             "curated_stack_valueerror",
@@ -392,6 +505,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
                 "Diagnose this stack trace:\nValueError: invalid literal for int() with base 10: 'abc'",
             ),
             ["int()", "Validate before conversion"],
+            expected_behavior="stack_trace_diagnosis",
         ),
         case(
             "curated_repo_lookup",
@@ -401,16 +515,19 @@ def build_eval_cases() -> list[dict[str, Any]]:
                 "file: app.py\n```python\nfrom calc import add\nprint(add(2, 3))\n```\nfile: calc.py\n```python\ndef add(a, b):\n    return a + b\n```",
             ),
             ["add is implemented in calc.py"],
+            expected_behavior="repo_context_lookup",
         ),
         case(
             "curated_test_command",
             chat_prompt("Recommend verification before commits.", "You edited a Python package. What command should run before committing?"),
             ["python -m pytest -q"],
+            expected_behavior="test_command",
         ),
         case(
             "curated_parse_port_review",
             chat_prompt("Review code for edge cases.", "Review this function:\n```python\ndef parse_port(value):\n    return int(value)\n```"),
             ["numeric", "1", "65535"],
+            expected_behavior="code_review",
         ),
         case(
             "curated_flag_patch",
@@ -420,6 +537,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
                 "file: flags.py\n```python\ndef is_enabled(value):\n    return value == 'false'\n```",
             ),
             ["return value == 'true'"],
+            expected_behavior="patch_boolean_flag",
         ),
     ]
 
@@ -451,7 +569,8 @@ def main() -> None:
         "train_records": len(train_records),
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
-        "format": "agentcoder-curated-sft-v1",
+        "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
+        "format": "agentcoder-curated-sft-v2",
         "note": "Deterministic synthetic supervision for gate testing; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
