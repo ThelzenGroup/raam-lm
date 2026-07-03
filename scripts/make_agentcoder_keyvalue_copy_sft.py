@@ -18,6 +18,8 @@ TARGET_FIELDS = 3
 DISTRACTOR_FIELDS = 4
 EVAL_MODES = ["mirror", "covered", "heldout", "ladder", "coverage_ladder"]
 COMPLETION_MODES = ["keyvalue", "key_only", "value_only"]
+VALUE_BOUNDARY_OPEN = "<value>"
+VALUE_BOUNDARY_CLOSE = "</value>"
 
 KEYS = [
     "symbol",
@@ -109,26 +111,55 @@ def choose_fields(
     return targets, distractors
 
 
-def repo_context(targets: list[dict[str, str]], distractors: list[dict[str, str]], rng: random.Random) -> str:
+def format_value(value: str, value_boundaries: bool = False) -> str:
+    return f"{VALUE_BOUNDARY_OPEN}{value}{VALUE_BOUNDARY_CLOSE}" if value_boundaries else value
+
+
+def strip_value_boundaries(value: str) -> str:
+    value = value.strip()
+    if value.startswith(VALUE_BOUNDARY_OPEN) and value.endswith(VALUE_BOUNDARY_CLOSE):
+        return value[len(VALUE_BOUNDARY_OPEN) : -len(VALUE_BOUNDARY_CLOSE)].strip()
+    return value
+
+
+def repo_context(
+    targets: list[dict[str, str]],
+    distractors: list[dict[str, str]],
+    rng: random.Random,
+    value_boundaries: bool = False,
+) -> str:
     rows = [*targets, *distractors]
     rng.shuffle(rows)
-    return "\n".join(f"{field['key']}: {field['value']}" for field in rows)
+    return "\n".join(f"{field['key']}: {format_value(field['value'], value_boundaries)}" for field in rows)
 
 
-def user_prompt(targets: list[dict[str, str]], completion_mode: str = "keyvalue") -> str:
+def user_prompt(
+    targets: list[dict[str, str]],
+    completion_mode: str = "keyvalue",
+    value_boundaries: bool = False,
+) -> str:
     keys = ", ".join(field["key"] for field in targets)
     if completion_mode == "key_only":
         return f"List these repo_context keys exactly and in order: {keys}. Return only one key per line."
     if completion_mode == "value_only":
+        if value_boundaries:
+            return (
+                f"Copy only the values for these repo_context keys exactly and in order: {keys}. "
+                "Return only one <value>...</value> wrapped value per line."
+            )
         return f"Copy only the values for these repo_context keys exactly and in order: {keys}. Return only one value per line."
     return f"Copy these repo_context fields exactly and in order: {keys}. Return only key=value lines."
 
 
-def assistant_text(targets: list[dict[str, str]], completion_mode: str = "keyvalue") -> str:
+def assistant_text(
+    targets: list[dict[str, str]],
+    completion_mode: str = "keyvalue",
+    value_boundaries: bool = False,
+) -> str:
     if completion_mode == "key_only":
         return "\n".join(field["key"] for field in targets)
     if completion_mode == "value_only":
-        return "\n".join(field["value"] for field in targets)
+        return "\n".join(format_value(field["value"], value_boundaries) for field in targets)
     return "\n".join(f"{field['key']}={field['value']}" for field in targets)
 
 
@@ -137,12 +168,17 @@ def chat_prompt(
     distractors: list[dict[str, str]],
     rng: random.Random,
     completion_mode: str = "keyvalue",
+    value_boundaries: bool = False,
 ) -> str:
     response_instruction = (
         "Return only exact key names, one per line."
         if completion_mode == "key_only"
         else (
-            "Return only exact values, one per line."
+            (
+                "Return only exact <value>...</value> wrapped values, one per line."
+                if value_boundaries
+                else "Return only exact values, one per line."
+            )
             if completion_mode == "value_only"
             else "Return only exact key=value lines."
         )
@@ -151,9 +187,9 @@ def chat_prompt(
         "<|system|>\n"
         f"{SYSTEM} {response_instruction}\n\n"
         "<|repo_context|>\n"
-        f"{repo_context(targets, distractors, rng)}\n\n"
+        f"{repo_context(targets, distractors, rng, value_boundaries=value_boundaries)}\n\n"
         "<|user|>\n"
-        f"{user_prompt(targets, completion_mode=completion_mode)}\n\n"
+        f"{user_prompt(targets, completion_mode=completion_mode, value_boundaries=value_boundaries)}\n\n"
         "<|assistant|>\n"
     )
 
@@ -177,6 +213,7 @@ def record(
     completion_mode: str = "keyvalue",
     target_fields: int = TARGET_FIELDS,
     distractor_fields: int = DISTRACTOR_FIELDS,
+    value_boundaries: bool = False,
 ) -> dict[str, Any]:
     if completion_mode not in COMPLETION_MODES:
         raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
@@ -192,7 +229,11 @@ def record(
         "Return only exact key names, one per line."
         if completion_mode == "key_only"
         else (
-            "Return only exact values, one per line."
+            (
+                "Return only exact <value>...</value> wrapped values, one per line."
+                if value_boundaries
+                else "Return only exact values, one per line."
+            )
             if completion_mode == "value_only"
             else "Return only exact key=value lines."
         )
@@ -214,11 +255,30 @@ def record(
         "train_variant_index": variant_index,
         "target_keys": [field["key"] for field in targets],
         "target_values": [field["value"] for field in targets],
+        "value_boundaries": value_boundaries,
         "expected_slots": expected_slots(targets),
         "system": f"{SYSTEM} {response_instruction}",
-        "repo_context": repo_context(targets, distractors, rng),
-        "messages": [{"role": "user", "content": user_prompt(targets, completion_mode=completion_mode)}],
-        "trace": [{"type": "assistant", "content": assistant_text(targets, completion_mode=completion_mode)}],
+        "repo_context": repo_context(targets, distractors, rng, value_boundaries=value_boundaries),
+        "messages": [
+            {
+                "role": "user",
+                "content": user_prompt(
+                    targets,
+                    completion_mode=completion_mode,
+                    value_boundaries=value_boundaries,
+                ),
+            }
+        ],
+        "trace": [
+            {
+                "type": "assistant",
+                "content": assistant_text(
+                    targets,
+                    completion_mode=completion_mode,
+                    value_boundaries=value_boundaries,
+                ),
+            }
+        ],
     }
 
 
@@ -230,6 +290,7 @@ def case(
     completion_mode: str = "keyvalue",
     target_fields: int = TARGET_FIELDS,
     distractor_fields: int = DISTRACTOR_FIELDS,
+    value_boundaries: bool = False,
 ) -> dict[str, Any]:
     if completion_mode not in COMPLETION_MODES:
         raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
@@ -259,6 +320,8 @@ def case(
             else [f"{field['key']}={field['value']}" for field in targets]
         )
     )
+    if completion_mode == "value_only" and value_boundaries:
+        required_substrings = [format_value(field["value"], value_boundaries=True) for field in targets]
     forbidden = (
         [field["key"] for field in distractors] + ["="]
         if completion_mode == "key_only"
@@ -268,9 +331,17 @@ def case(
             else forbidden_substrings(distractors)
         )
     )
+    if completion_mode == "value_only" and value_boundaries:
+        forbidden = [format_value(field["value"], value_boundaries=True) for field in distractors] + ["="]
     return {
         "name": name,
-        "prompt": chat_prompt(targets, distractors, rng, completion_mode=completion_mode),
+        "prompt": chat_prompt(
+            targets,
+            distractors,
+            rng,
+            completion_mode=completion_mode,
+            value_boundaries=value_boundaries,
+        ),
         "required_substrings": required_substrings,
         "forbidden_substrings": forbidden,
         "expected_behavior": expected_behavior,
@@ -280,6 +351,7 @@ def case(
         "expected_value_sequence": [field["value"] for field in targets],
         "enforce_key_sequence": completion_mode in {"keyvalue", "key_only"},
         "enforce_value_sequence": completion_mode in {"keyvalue", "value_only"},
+        "value_boundaries": value_boundaries,
         "eval_tier": eval_tier,
         "value_formats": sorted({field["value_format"] for field in targets}),
         "target_keys": [field["key"] for field in targets],
@@ -293,6 +365,7 @@ def build_train_records(
     completion_mode: str = "keyvalue",
     target_fields: int = TARGET_FIELDS,
     distractor_fields: int = DISTRACTOR_FIELDS,
+    value_boundaries: bool = False,
 ) -> list[dict[str, Any]]:
     if train_records < 1:
         raise ValueError("train_records must be positive")
@@ -312,6 +385,7 @@ def build_train_records(
                     completion_mode=completion_mode,
                     target_fields=target_fields,
                     distractor_fields=distractor_fields,
+                    value_boundaries=value_boundaries,
                 )
             )
     return records
@@ -325,6 +399,7 @@ def build_eval_cases(
     completion_mode: str = "keyvalue",
     target_fields: int = TARGET_FIELDS,
     distractor_fields: int = DISTRACTOR_FIELDS,
+    value_boundaries: bool = False,
 ) -> list[dict[str, Any]]:
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"eval_mode must be one of {', '.join(EVAL_MODES)}")
@@ -345,6 +420,7 @@ def build_eval_cases(
                 completion_mode=completion_mode,
                 target_fields=target_fields,
                 distractor_fields=distractor_fields,
+                value_boundaries=value_boundaries,
             )
             for index in range(eval_cases)
         )
@@ -364,6 +440,7 @@ def build_eval_cases(
                 completion_mode=completion_mode,
                 target_fields=target_fields,
                 distractor_fields=distractor_fields,
+                value_boundaries=value_boundaries,
             )
             for index in range(eval_cases)
         )
@@ -377,6 +454,7 @@ def build_eval_cases(
                 completion_mode=completion_mode,
                 target_fields=target_fields,
                 distractor_fields=distractor_fields,
+                value_boundaries=value_boundaries,
             )
             for index in range(eval_cases)
         )
@@ -401,7 +479,14 @@ def main() -> None:
     parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
     parser.add_argument("--target-fields", type=int, default=TARGET_FIELDS)
     parser.add_argument("--distractor-fields", type=int, default=DISTRACTOR_FIELDS)
+    parser.add_argument(
+        "--value-boundaries",
+        action="store_true",
+        help="Wrap value-only repo_context and assistant values as <value>...</value>.",
+    )
     args = parser.parse_args()
+    if args.value_boundaries and args.completion_mode != "value_only":
+        raise ValueError("--value-boundaries is currently supported only with --completion-mode value_only")
 
     train_records = build_train_records(
         seed=args.seed,
@@ -410,6 +495,7 @@ def main() -> None:
         completion_mode=args.completion_mode,
         target_fields=args.target_fields,
         distractor_fields=args.distractor_fields,
+        value_boundaries=args.value_boundaries,
     )
     eval_cases = build_eval_cases(
         seed=args.seed,
@@ -419,6 +505,7 @@ def main() -> None:
         completion_mode=args.completion_mode,
         target_fields=args.target_fields,
         distractor_fields=args.distractor_fields,
+        value_boundaries=args.value_boundaries,
     )
     train_path = Path(args.train_output)
     cases_path = Path(args.cases_output)
@@ -451,6 +538,9 @@ def main() -> None:
         "requested_eval_cases": args.eval_cases,
         "target_fields": args.target_fields,
         "distractor_fields": args.distractor_fields,
+        "value_boundaries": args.value_boundaries,
+        "value_boundary_open": VALUE_BOUNDARY_OPEN if args.value_boundaries else None,
+        "value_boundary_close": VALUE_BOUNDARY_CLOSE if args.value_boundaries else None,
         "available_keys": KEYS,
         "value_formats": VALUE_FORMATS,
         "behavior_counts": dict(sorted(behavior_counts.items())),

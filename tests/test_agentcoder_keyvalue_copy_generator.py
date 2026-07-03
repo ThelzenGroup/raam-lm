@@ -15,9 +15,12 @@ from scripts.make_agentcoder_keyvalue_copy_sft import (
     TARGET_FIELDS,
     TRAIN_RECORDS,
     TRAIN_VARIANTS_PER_ROW,
+    VALUE_BOUNDARY_CLOSE,
+    VALUE_BOUNDARY_OPEN,
     VALUE_FORMATS,
     build_eval_cases,
     build_train_records,
+    strip_value_boundaries,
 )
 from scripts.run_agentcoder_slotcopy_gate import summarize_ladder, summarize_slot_families
 
@@ -207,6 +210,44 @@ def test_keyvalue_value_only_can_target_one_value_for_curriculum():
         "covered_value_slot",
         "heldout_slot",
     }
+
+
+def test_keyvalue_value_only_boundaries_wrap_and_keep_plain_expected_values():
+    records = build_train_records(
+        seed=17,
+        train_records=4,
+        train_variants_per_row=2,
+        completion_mode="value_only",
+        target_fields=1,
+        value_boundaries=True,
+    )
+    cases = build_eval_cases(
+        seed=17,
+        eval_mode="coverage_ladder",
+        train_records=4,
+        eval_cases=2,
+        completion_mode="value_only",
+        target_fields=1,
+        value_boundaries=True,
+    )
+    first_record = records[0]
+    first_case = cases[0]
+    completion = first_record["trace"][0]["content"]
+    wrapped_value = f"{VALUE_BOUNDARY_OPEN}{first_record['target_values'][0]}{VALUE_BOUNDARY_CLOSE}"
+
+    assert completion == wrapped_value
+    assert wrapped_value in first_record["repo_context"]
+    assert first_record["value_boundaries"] is True
+    assert VALUE_BOUNDARY_OPEN in first_record["system"]
+    assert VALUE_BOUNDARY_OPEN in first_record["messages"][0]["content"]
+    assert first_case["value_boundaries"] is True
+    assert first_case["required_substrings"] == [
+        f"{VALUE_BOUNDARY_OPEN}{first_case['expected_value_sequence'][0]}{VALUE_BOUNDARY_CLOSE}"
+    ]
+    assert first_case["expected_value_sequence"] == [
+        first_case["expected_slots"][key] for key in first_case["target_keys"]
+    ]
+    assert strip_value_boundaries(completion) == first_record["target_values"][0]
 
 
 def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():

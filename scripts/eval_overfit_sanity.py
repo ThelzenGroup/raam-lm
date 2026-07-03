@@ -16,6 +16,7 @@ from raam_lm.config import load_config
 from raam_lm.registry import build_model
 from raam_lm.tokenization import AgentCoderTokenizer
 from raam_lm.train_utils import resolve_device, seed_all
+from scripts.make_agentcoder_keyvalue_copy_sft import strip_value_boundaries
 
 
 CASES = [
@@ -356,7 +357,7 @@ def generated_value_sequence(completion: str) -> list[str]:
             _, value = line.split("=", 1)
         else:
             value = line
-        value = value.strip()
+        value = strip_value_boundaries(value)
         if value:
             values.append(value)
     return values
