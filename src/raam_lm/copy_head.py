@@ -42,6 +42,7 @@ class CausalCopyHead(nn.Module):
         copy_probs_by_pos = copy_probs_by_pos * source_mask.to(dtype=copy_probs_by_pos.dtype)
         denom = copy_probs_by_pos.sum(dim=-1, keepdim=True).clamp_min(1e-12)
         copy_probs_by_pos = copy_probs_by_pos / denom
+        copy_probs_by_pos = copy_probs_by_pos.to(dtype=lm_logits.dtype)
         copy_probs_by_vocab = torch.zeros(
             bsz,
             seq_len,

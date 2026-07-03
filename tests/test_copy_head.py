@@ -42,6 +42,19 @@ def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     torch.testing.assert_close(base[:, :3], changed[:, :3])
 
 
+def test_causal_copy_head_matches_lower_precision_logit_dtype():
+    config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
+    head = CausalCopyHead(d_model=4, vocab_size=16, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 4, 4)
+    input_ids = torch.tensor([[3, 5, 5, 9]])
+    lm_logits = torch.zeros(1, 4, 16, dtype=torch.bfloat16)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out.dtype == torch.bfloat16
+
+
 def test_registry_models_enable_copy_head_from_config():
     for model_name in ["raam", "transformer", "pure_mamba_like"]:
         config = ModelConfig(
