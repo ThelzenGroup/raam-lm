@@ -2422,6 +2422,103 @@ Local artifact pull:
 
 Checkpoint weights were not pulled.
 
+## AgentCoder Key-Only Variant Gate
+
+Added a key-only mode to the existing key-value generator, runner, and
+evaluator. The mode keeps the same repo-context rows, target-key sampling,
+distractor sampling, and coverage tiers, but changes the assistant target from
+`key=value` lines to one requested key name per line. This directly tests
+whether the model can follow the user-requested key order before value-copying
+is reintroduced.
+
+Changed files:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `scripts/eval_overfit_sanity.py`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py scripts/eval_overfit_sanity.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+rm -rf work/keyonly_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/keyonly_smoke/train.jsonl --cases-output work/keyonly_smoke/cases.json --manifest-output work/keyonly_smoke/manifest.json --completion-mode key_only --eval-mode coverage_ladder --train-records 12 --train-variants-per-row 3 --eval-cases 4
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- focused key-value/slotcopy tests: `15 passed`
+- related generator bundle: `39 passed`
+- key-only smoke manifest: 12 base train rows, 3 variants per row, 36 train
+  records, `completion_mode: key_only`, and 12 eval cases split evenly across
+  `seen_slot`, `covered_value_slot`, and `heldout_slot`
+- `git diff --check` passed
+
+Pushed `b4aed1c Add key-only repo key gate`.
+
+Remote Vast RTX 5090 setup:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyonly_variant4_compare_20260703T111138Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode key_only --max-new-tokens 16 \
+  --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyonly_variant4_compare_20260703T111138Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode key_only --max-new-tokens 16 \
+  --clean --no-fail
+```
+
+Remote focused tests: `26 passed, 8 deselected`.
+
+Key-only coverage ladder results:
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out/OOV Pass | Key Sequence Accuracy | Behavior Accuracy | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM key-only | 96 / 96 | 32 / 32 | 32 / 32 | 32 / 32 | 96 / 96 | 96 / 96 | 0.299722 | 26515.3 |
+| Transformer key-only | 0 / 96 | 0 / 32 | 0 / 32 | 0 / 32 | 0 / 96 | 53 / 96 | 0.866070 | 26558.5 |
+
+Sample completions:
+
+- RAAM seen: expected `service`, `file`, `fixture`; generated
+  `service\nfile\nfixture\n<eos>`.
+- RAAM covered-value: expected `setting`, `parser`, `service`; generated
+  `setting\nparser\nservice\n<eos>`.
+- RAAM held-out/OOV: expected `adapter`, `file`, `service`; generated
+  `adapter\nfile\nservice\n<eos>`.
+- Transformer seen: expected `service`, `file`, `fixture`; generated
+  `endpoint\nroute\nsymbol\n<eos>`.
+- Transformer covered/held-out samples generated `endpoint\nroute\nendpoint\n<eos>`.
+
+Interpretation: this is the first clean positive separation for RAAM on the
+current AgentCoder synthetic ladder. RAAM can learn the user-requested key-order
+selection rule under the 4-variant regime, while the matched Transformer does
+not under the same tiny schedule. This still does not prove the full model is
+useful for coding, but it narrows the next bottleneck: key selection can work;
+value copying/continuation is the failing component.
+
+Next useful step: add a key-conditioned value-only gate. It should provide the
+repo context plus the requested key sequence and ask for only the corresponding
+values in order. That separates value retrieval/continuation from key-selection
+and tells us whether to invest in a value span-copy route or in more data/schedule
+first.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_keyonly_variant4_compare_20260703T111138Z`
+
+Checkpoint weights were not pulled.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
