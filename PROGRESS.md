@@ -990,6 +990,53 @@ Remote validation on Vast RTX 5090:
 /venv/main/bin/python -m pytest -q
 ```
 
+## AgentCoder Gate Comparison Report
+
+The Vast instance remained unavailable on the next retry:
+
+```text
+Required resources are currently unavailable, state change queued.
+```
+
+After a 75-second poll, both known Vast RTX 5090 instances still reported
+`actual_status: exited`, `cur_state: stopped`, and `next_state: stopped`.
+
+Added `scripts/compare_agentcoder_gates.py` to compare pulled curated gate
+artifacts without requiring `torch`. The report reads `summary.json` and
+`curated_eval.json`, then emits:
+
+- exact pass rate
+- behavior accuracy and confusion matrix
+- failed cases with expected/predicted behavior
+- missing required substrings and JSON correctness
+- train/validation token counts and final loss/speed metrics
+
+Validation:
+
+```bash
+python3 -m py_compile scripts/compare_agentcoder_gates.py scripts/eval_overfit_sanity.py
+python3 -m pytest -q tests/test_compare_agentcoder_gates.py
+python3 scripts/compare_agentcoder_gates.py \
+  /home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_20260703T030727Z \
+  /home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_cmdfix_20260703T031643Z \
+  --output-json /home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_latest.json \
+  --output-md /home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_latest.md
+git diff --check
+```
+
+Resulting comparison:
+
+| Run | Exact pass | Behavior accuracy | Final validation loss |
+| --- | ---: | ---: | ---: |
+| Curated v1 | 8 / 10 | 9 / 10 | 1.5991248786449432 |
+| Command-disambiguation v2 | 7 / 10 | 8 / 10 | 0.7426003813743591 |
+
+The report makes the next balanced-gate target concrete: the new balanced
+curriculum should beat the current best exact gate (`8 / 10`) while preserving
+or improving behavior accuracy (`9 / 10`). Lower validation loss alone is not a
+good enough signal, because v2 lowered validation loss while regressing exact
+held-out behavior.
+
 Results: targeted mirror-val test passed, script syntax passed, and the full
 test suite passed with `22 passed in 32.73s`.
 

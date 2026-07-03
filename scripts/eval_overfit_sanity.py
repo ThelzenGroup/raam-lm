@@ -231,6 +231,8 @@ def infer_behavior(completion: str) -> str:
         return "repo_context_lookup"
     if "reproduce" in lower and ("assertion" in lower or "smallest" in lower):
         return "plain_debugging"
+    if "65535" in lower or ("numeric" in lower and "port" in lower):
+        return "code_review"
     if (
         "valueerror" in lower
         or "int()" in lower
@@ -239,8 +241,6 @@ def infer_behavior(completion: str) -> str:
         or "filenotfounderror" in lower
     ):
         return "stack_trace_diagnosis"
-    if "65535" in lower or ("numeric" in lower and "port" in lower):
-        return "code_review"
     if "commit" in lower and ("summary" in lower or "message" in lower):
         return "commit_summary"
     return "unknown"

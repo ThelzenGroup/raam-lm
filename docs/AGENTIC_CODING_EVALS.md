@@ -98,3 +98,21 @@ patch prompt with a generic addition patch.
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
 spending on a larger supervised or continuation run.
+
+## Comparing Gate Runs
+
+Use the gate comparison script after pulling one or more curated gate artifact
+directories:
+
+```bash
+python scripts/compare_agentcoder_gates.py \
+  runs/agentcoder_curated_gate_a \
+  runs/agentcoder_curated_gate_b \
+  --output-json runs/agentcoder_gate_comparison.json \
+  --output-md runs/agentcoder_gate_comparison.md
+```
+
+The report compares exact pass rate, validation loss, behavior accuracy, failed
+cases, and behavior confusions. This is useful for deciding whether a new
+curriculum actually improves held-out behavior or only lowers validation loss
+while shifting mistakes between behavior families.
