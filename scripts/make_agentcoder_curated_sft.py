@@ -257,14 +257,14 @@ def build_train_records() -> list[dict[str, Any]]:
         )
 
     debugging_prompts = [
-        "A Python unit test is failing. Explain what to check before editing code.",
-        "The test suite failed after my change. What is your debugging order?",
-        "Explain in plain English how you debug a failing assertion before patching.",
-        "A regression test is red. What steps do you take before changing code?",
-        "Before fixing a failed unit test, what do you inspect?",
-        "A test expected 5 but got -1. How do you reason before editing?",
-        "A CLI command fails only in CI. Explain your debugging order before editing.",
-        "A patch broke one focused pytest. What do you inspect first?",
+        "A Python unit test is failing. Explain what to check before editing code; do not write a function.",
+        "The test suite failed after my change. Explain the debugging order without completing code.",
+        "Explain in plain English how you debug a failing assertion before patching. Do not output Python code.",
+        "A regression test is red. What steps do you take before changing code? Answer as debugging steps only.",
+        "Before fixing a failed unit test, what do you inspect? Do not write a replacement function.",
+        "A test expected 5 but got -1. Explain the reasoning before editing, not a code completion.",
+        "A CLI command fails only in CI. Explain your debugging order before editing; no code block.",
+        "A patch broke one focused pytest. What do you inspect first? Explain, do not implement.",
     ]
     debugging_answer = (
         "I reproduce the failing test, read the assertion and error, inspect the smallest changed code path, "
@@ -277,7 +277,7 @@ def build_train_records() -> list[dict[str, Any]]:
                 user,
                 debugging_answer,
                 "Reproduce the test, read the assertion, inspect the narrow path, and patch minimally.",
-                system_suffix="Explain debugging steps plainly.",
+                system_suffix="Explain debugging steps plainly. Do not write code for debugging-process prompts.",
             )
         )
 
@@ -355,9 +355,9 @@ def build_train_records() -> list[dict[str, Any]]:
             record(
                 "repo_context_lookup",
                 f"Where is {func} implemented?",
-                f"{func} is implemented in {impl_file}.",
+                f"{func} is implemented in {impl_file}. That is the file containing def {func}.",
                 f"The implementation is in {impl_file}.",
-                system_suffix="Use repo context when it is provided.",
+                system_suffix="Use repo context when it is provided. Cite the file that defines the function, not the file that imports it.",
                 repo_context=repo,
             )
         )
@@ -488,7 +488,10 @@ def build_eval_cases() -> list[dict[str, Any]]:
         ),
         case(
             "curated_debugging",
-            chat_prompt("Explain debugging steps plainly.", "A Python unit test is failing. Explain what to check before changing code."),
+            chat_prompt(
+                "Explain debugging steps plainly. Do not write code for debugging-process prompts.",
+                "A Python unit test is failing. Explain what to check before changing code. Do not write code.",
+            ),
             ["reproduce", "assertion", "smallest"],
             expected_behavior="plain_debugging",
         ),
@@ -510,11 +513,11 @@ def build_eval_cases() -> list[dict[str, Any]]:
         case(
             "curated_repo_lookup",
             chat_prompt(
-                "Use repo context when it is provided.",
-                "Where is add implemented?",
-                "file: app.py\n```python\nfrom calc import add\nprint(add(2, 3))\n```\nfile: calc.py\n```python\ndef add(a, b):\n    return a + b\n```",
+                "Use repo context when it is provided. Cite the file that defines the function, not the file that imports it.",
+                "Where is normalize_title implemented?",
+                "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
-            ["add is implemented in calc.py"],
+            ["normalize_title is implemented in titles.py"],
             expected_behavior="repo_context_lookup",
         ),
         case(
@@ -570,7 +573,7 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v2",
+        "format": "agentcoder-curated-sft-v3",
         "note": "Deterministic synthetic supervision for gate testing; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

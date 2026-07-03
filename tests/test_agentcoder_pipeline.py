@@ -161,6 +161,10 @@ def test_curated_sft_generator_has_behavior_coverage():
         "curated_is_even_completion",
     }.issubset(case_names)
     assert all("expected_behavior" in row for row in cases)
+    case_by_name = {row["name"]: row for row in cases}
+    assert "Do not write code" in case_by_name["curated_debugging"]["prompt"]
+    assert "normalize_title is implemented in titles.py" in case_by_name["curated_repo_lookup"]["required_substrings"]
+    assert "calc.py" not in case_by_name["curated_repo_lookup"]["prompt"]
 
 
 def test_train_resume_generate_and_agentic_eval(tmp_path):
