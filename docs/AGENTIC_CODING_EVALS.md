@@ -293,6 +293,11 @@ rates, and the first seed below the selected pass-rate threshold. Treat this as
 a repeatability control only: passing it means the tiny mirrored binding fix is
 less seed-fragile, not that the model can chat or code.
 
+For candidates that only pass after extra optimization, rerun the same
+repeatability gate with that larger `--steps` value before scaling. Use the
+minimum per-seed pass rate as the gating signal. A strong mean pass rate is not
+enough if any seed still collapses to valid-looking but wrong slot values.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another

@@ -1790,6 +1790,84 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## AgentCoder Atomic Hybrid1 Seed-Fixed Repeatability Gate
+
+Discovered that the earlier atomic anchor seed sweep did not actually vary the
+training seed. The data generator accepted `--seed`, but `scripts/train.py` did
+not have a CLI seed override and `scripts/run_agentcoder_atomic_copy_gate.py`
+did not forward the seed into packing or training. This means the older
+repeatability rows from that pre-fix run were fixed-seed repeats, not true
+initialization and data-order seed evidence.
+
+Fixed in commit `897e201`:
+
+- `scripts/train.py` now accepts `--seed` and applies it before seeding,
+  dataset construction, and model initialization.
+- `scripts/run_agentcoder_atomic_copy_gate.py` now forwards the same seed to
+  `pack_dataset.py` and `train.py`.
+- `tests/test_agentcoder_atomic_anchor_seed_sweep.py` now asserts seed
+  forwarding into both generated commands.
+
+Local validation before the corrected Vast run:
+
+```bash
+python3 -m py_compile scripts/train.py scripts/run_agentcoder_atomic_copy_gate.py scripts/run_agentcoder_atomic_anchor_seed_sweep.py scripts/run_agentcoder_atomic_cardinality_sweep.py
+python3 -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Result: focused local tests passed, `30 passed in 0.10s`; syntax and diff checks
+passed.
+
+Corrected Vast RTX 5090 run:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_anchor_seed_sweep.py \
+  --configs hybrid1=configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --seeds 17,29,41 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_seed_sweep_steps2400_seedfix_20260703T083416Z \
+  --device cuda \
+  --clean
+```
+
+Remote focused tests passed before the run.
+
+| Config | Seeds | Exact Pass Mean | Min | Max | Total Exact Pass | Mean Val Loss | Mean Tokens/sec | All Passed |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| one-token hybrid | `17,29,41` | 53 / 64 | 31 / 64 | 64 / 64 | 159 / 192 | 0.072933 | 21910.6 | false |
+
+Per-seed rows:
+
+| Seed | Exact Pass | Behavior Accuracy | Slot Errors | Val Loss | Tokens/sec |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 17 | 64 / 64 | 64 / 64 | 0 | 0.062354 | 22197.1 |
+| 29 | 31 / 64 | 64 / 64 | 33 | 0.087371 | 22018.3 |
+| 41 | 64 / 64 | 64 / 64 | 0 | 0.069072 | 21516.3 |
+
+Seed `29` failed by copying valid-looking slots from the wrong training rows,
+not by choosing the wrong behavior. The first failed case requested
+`symbol=copy_symbol_002` and `file=copy_file_002.py`, but generated
+`symbol=copy_symbol_033` and `file=copy_file_033.py`. This is a current-context
+binding failure, not a format or behavior-classification failure.
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_seed_sweep_steps2400_seedfix_20260703T083416Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: the one-token hybrid result at `2400` steps is not
+seed-repeatable. The previous `64 / 64` single-seed result remains useful as a
+ceiling check, but it does not clear RAAM for broader chat/coding training. The
+next useful model step is a seed-sensitive context-binding diagnosis: either
+run seed `29` longer/lower-LR to see whether it catches up, or add an auxiliary
+slot-alignment/current-context copying objective and rerun the same corrected
+three-seed gate. Do not scale to a larger paid chat/coding run until the minimum
+per-seed atomic mirror pass rate reaches `64 / 64`, then move to held-out and
+decoy slot-copy gates.
+
 ## AgentCoder Atomic Anchor Seed Repeatability Gate
 
 Added a focused repeatability harness for RAAM anchor variants:
