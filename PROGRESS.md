@@ -1790,6 +1790,102 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## 2026-07-03 - Request-Key Value Copy Route
+
+Goal: improve the one-value AgentCoder key-value copy gate for the chat/coding
+target without retraining on external data. The route is deliberately a
+falsifiable scratch mechanism, not evidence that RAAM works scientifically.
+
+Commits:
+
+- `2bfeb86` - add request-key value copy route
+- `56484bb` - make the route eval-only and softer
+- `3c81771` - constrain the query to the requested-key span
+- `d36a500` - ignore query separators and source only from repo_context
+- `d7c8180` - prevent continuation from crossing value-line stop tokens
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/copy_head.py tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused non-Torch local tests passed: `43 passed in 0.25s`
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_pipeline.py -k "copy_head or request_value or keyvalue or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards"
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_request_value_evalonly_onefield_compare_20260703T121915Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --max-new-tokens 48 --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_request_value_evalonly_onefield_compare_20260703T121915Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --max-new-tokens 48 --clean --no-fail
+```
+
+Remote focused tests after the final route fix passed:
+
+- `36 passed, 8 deselected, 1 warning`
+
+Request-route eval results on the same trained checkpoints:
+
+| Route / Model | Pass | Seen | Covered Value | Heldout | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Initial strong request route, RAAM | 0 / 96 | 0 / 32 | 0 / 32 | 0 / 32 | Overpowered and copied key/file-like tokens instead of values. |
+| Eval-only query-filtered, RAAM | 58 / 96 | 32 / 32 | 26 / 32 | 0 / 32 | Fixed first-token value lookup but missed `.py` continuations. |
+| Eval-only query-filtered, Transformer | 58 / 96 | 32 / 32 | 26 / 32 | 0 / 32 | Same result as RAAM. |
+| Continuation 24 without segment stop, RAAM | 17 / 96 | 9 / 32 | 8 / 32 | 0 / 32 | Over-copied into later repo-context lines. |
+| Continuation 24 with same-line stop, RAAM | 64 / 96 | 32 / 32 | 32 / 32 | 0 / 32 | Best RAAM result; all seen and tokenizer-covered cases pass. |
+| Continuation 24 with same-line stop, Transformer | 63 / 96 | 32 / 32 | 31 / 32 | 0 / 32 | One covered duplication remains. |
+
+Representative corrected completions:
+
+- `copy_service_000` -> `copy_service_000\n<eos>`
+- `disabled_file_001` -> `disabled_file_001\n<eos>`
+- `copy_adapter_002.py` -> `copy_adapter_002.py\n<eos>`
+
+Remaining failure:
+
+- heldout byte-fallback values still fail, e.g. `case_adapter_096` generated
+  `cadadadadadadadadadadadadadadadadadadadadadadada`.
+- This means the route can retrieve single learned value tokens and
+  tokenizer-covered multi-token filename values, but not unseen byte-level value
+  continuations yet.
+
+Artifacts pulled without checkpoint weights:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_request_value_evalonly_onefield_compare_20260703T121915Z`
+
+Remote cleanup:
+
+- deleted `last.pt` for both RAAM and Transformer under the request-route run
+- verified no `.pt` or `.safetensors` remained under that run directory
+- verified both Vast RTX 5090 instances were `exited` after stop:
+  `43627905 exited`, `43634442 exited`
+
+Interpretation: the request-key copy route is now a useful diagnostic scaffold
+for exact repo-context value retrieval. It improves the one-value gate versus
+the previous unwrapped one-value results (`RAAM 32/96`, Transformer `35/96`),
+but the improvement is not RAAM-specific because the Transformer baseline gets
+nearly the same lift. The next highest-value step is to make byte-fallback
+continuation copy robust without hardcoding token ids, or to switch this probe
+to tokenizer-stable delimiters before returning to larger chat/coding training.
+
 ## Pair-Consistency Copy-Head Gate
 
 Added an opt-in copy-head consistency bias for the fragile atomic binding gate.
