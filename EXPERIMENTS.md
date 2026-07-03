@@ -47,6 +47,14 @@ less peak VRAM. This promotes compression-only RAAM as the next scaling default,
 it is still base-LM evidence only: chat/tool-call validity and patch-apply eval
 scores are not useful yet.
 
+Expanded Stage 5 evidence: the full Stage 5 data path successfully built a larger
+raw corpus, tokenizer, and packed 2048-token corpus, but the older
+`raam_agentcoder_100m` auxiliary-loss schedule was not stable. Validation reached
+its best point early, then worsened by the final evaluation with collapsed
+generation and `0.0` agentic scores. The next candidate is
+`raam_agentcoder_100m_stage5_stable`, which keeps compression-only RAAM but disables
+early reconstruction loss and curriculum MTP until a clean base-LM curve exists.
+
 ## Ablations
 
 - No compression.

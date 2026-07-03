@@ -6,8 +6,8 @@ DATA_ROOT="${DATA_ROOT:-/root/data/agentcoder_stage5}"
 RAW_DIR="${RAW_DIR:-$DATA_ROOT/raw}"
 PACKED_DIR="${PACKED_DIR:-$DATA_ROOT/packed_2048}"
 TOKENIZER="${TOKENIZER:-$DATA_ROOT/tokenizer.json}"
-RUN_DIR="${RUN_DIR:-$BASE_DIR/runs/stage5_raam_agentcoder_100m_candidate}"
-CONFIG="${CONFIG:-configs/scratch/raam_agentcoder_100m.yaml}"
+RUN_DIR="${RUN_DIR:-$BASE_DIR/runs/stage5_raam_agentcoder_100m_stage5_stable}"
+CONFIG="${CONFIG:-configs/scratch/raam_agentcoder_100m_stage5_stable.yaml}"
 
 # Moderate defaults are meant to grow beyond the tiny gate while still being
 # feasible on one RTX 5090. Override these upward when disk and time allow.

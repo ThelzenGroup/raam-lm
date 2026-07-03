@@ -294,13 +294,17 @@ candidate run with:
 cd /root/raam-lm
 BASE_DIR=/root/raam-lm \
 DATA_ROOT=/root/data/agentcoder_stage5 \
-RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_stage5_stable \
 STEPS=5000 RESUME_STEPS=5500 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
-This wrapper defaults to `configs/scratch/raam_agentcoder_100m.yaml`, builds a
-separate Stage 5 tokenizer and packed corpus, exports `model_only_fp16.pt`, and keeps
-one optimizer-resumable `last.pt` unless `KEEP_TRAINING_CHECKPOINTS=0` is set. Use a
-larger Vast disk for this than for the tiny gates, and pull artifacts before stopping
-or destroying the instance.
+This wrapper defaults to
+`configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`, builds a separate Stage
+5 tokenizer and packed corpus, exports `model_only_fp16.pt`, and keeps one
+optimizer-resumable `last.pt` unless `KEEP_TRAINING_CHECKPOINTS=0` is set. The
+stable config keeps compression enabled but disables early reconstruction loss
+and curriculum MTP; the first expanded Stage 5 run with the older auxiliary-loss
+schedule improved early and then collapsed by the final validation. Use a larger
+Vast disk for this than for the tiny gates, and pull artifacts before stopping or
+destroying the instance.

@@ -287,7 +287,7 @@ Next highest-value experiment: expand the real AgentCoder corpus substantially, 
 
 ## Stage 5 Candidate Entrypoint
 
-Added `scripts/vast_train_100m_candidate.sh` as a dedicated next-step wrapper. It defaults to the winning compression-only `configs/scratch/raam_agentcoder_100m.yaml`, a separate `/root/data/agentcoder_stage5` data root, moderate expanded dataset source limits, `5000 -> 5500` steps, `SAVE_EVERY=0`, a compact model-only export, and one optimizer-resumable `last.pt` for continuation.
+Added `scripts/vast_train_100m_candidate.sh` as a dedicated next-step wrapper. It initially defaulted to the winning compression-only `configs/scratch/raam_agentcoder_100m.yaml`, a separate `/root/data/agentcoder_stage5` data root, moderate expanded dataset source limits, `5000 -> 5500` steps, `SAVE_EVERY=0`, a compact model-only export, and one optimizer-resumable `last.pt` for continuation. After the expanded Stage 5 candidate destabilized, the wrapper default was changed to `configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`.
 
 Updated:
 
@@ -346,3 +346,97 @@ Smoke evidence:
 - JSON tool-call validity and mean patch apply rate remained `0.0`, as expected for a 3-step smoke
 - `KEEP_TRAINING_CHECKPOINTS=0` removed all `.pt` files after eval
 - Vast disk remained at `1%` used
+
+## Stage 5 Expanded Candidate Run
+
+Pushed `6a0ce85` after adding a guard that lets `scripts/vast_train_50m.sh`
+continue when dataset preparation exits non-zero after writing a valid
+`manifest.json`. This handled a Python finalization crash after the expanded raw
+manifest had already been written.
+
+Ran the expanded Stage 5 candidate on Vast RTX 5090:
+
+```bash
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate_retry_20260702T224633Z/train \
+STEPS=5000 RESUME_STEPS=5500 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=1 KEEP_TRAINING_CHECKPOINTS=1 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
+Raw Stage 5 manifest records:
+
+| Source | Records |
+| --- | ---: |
+| `OpenAssistant/oasst1` | 5000 |
+| `allenai/WildChat` | 10000 |
+| `bigcode/starcoder2data-extras/documentation` | 10000 |
+| `bigcode/starcoder2data-extras/issues` | 10000 |
+| `bigcode/starcoder2data-extras/kaggle` | 5000 |
+| `bigcode/starcoder2data-extras/stackoverflow` | 10000 |
+| `nvidia/Open-SWE-Traces` | 10000 |
+| `nvidia/SWE-Zero-openhands-trajectories` | 10000 |
+
+Packed corpus:
+
+- tokenizer vocab size: `32768`
+- train docs: `68600`
+- train tokens: `1887569077`
+- validation docs: `1400`
+- validation tokens: `40123219`
+- sequence length: `2048`
+
+Training result:
+
+| Metric | Value |
+| --- | ---: |
+| Last logged step | 5499 |
+| Tokens seen | 360448000 |
+| Best validation loss | 3.0947578072547914 at step 500 |
+| First validation loss | 10.370828104019164 |
+| Final validation loss | 13.07088327407837 |
+| Final train loss | 81.24600219726562 |
+| Final next-token loss | 15.282869338989258 |
+| Final reconstruction loss | 169.55172729492188 |
+| Final MTP h2 loss | 261.0045166015625 |
+| Final MTP h3 loss | 730.0146484375 |
+| Final tokens/sec | 153872.55807689478 |
+| Peak allocated VRAM MB | 18847.81689453125 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_candidate_retry_20260702T224633Z`.
+The pull included `model_only_fp16.pt` and excluded optimizer `last.pt`.
+
+Interpretation: the expanded Stage 5 data path works, but the older
+`raam_agentcoder_100m.yaml` auxiliary-loss schedule is not stable at this scale.
+The model learned sharply at first, then validation loss worsened, generation
+collapsed into repetitive text, and agentic scores stayed at zero. Do not promote
+this run. The next candidate is
+`configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`, which keeps
+compression-only RAAM but disables early reconstruction loss and curriculum MTP.
+
+Local validation note while preparing the stable config:
+
+```text
+$ python3 scripts/estimate_flops.py --config configs/scratch/raam_agentcoder_100m_stage5_stable.yaml
+Traceback (most recent call last):
+  File "/home/lumalgo/Documents/exp2/scripts/estimate_flops.py", line 11, in <module>
+    from raam_lm.config import config_hash, load_config
+  File "/home/lumalgo/Documents/exp2/src/raam_lm/__init__.py", line 4, in <module>
+    from .registry import build_model, available_models
+  File "/home/lumalgo/Documents/exp2/src/raam_lm/registry.py", line 5, in <module>
+    from .baselines import DenseTransformerForCausalLM, PureMambaLikeForCausalLM
+  File "/home/lumalgo/Documents/exp2/src/raam_lm/baselines/__init__.py", line 1, in <module>
+    from .transformer import DenseTransformerForCausalLM
+  File "/home/lumalgo/Documents/exp2/src/raam_lm/baselines/transformer.py", line 5, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'
+```
+
+Fallback validation passed with system Python: YAML loaded successfully,
+`use_curriculum_mtp` was false, `compression.recon_loss_weight` was `0.0`, and
+`mtp.enabled` was false. Torch-side validation must run on Vast or in a local
+environment with PyTorch installed.

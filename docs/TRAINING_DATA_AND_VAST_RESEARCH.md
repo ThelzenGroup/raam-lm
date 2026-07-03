@@ -6,7 +6,7 @@ Last updated: 2026-07-02
 
 We are training RAAM-AgentCoder from scratch on a staged chat and software-engineering corpus, not on one monolithic dataset.
 
-The first paid Vast.ai run should use `configs/scratch/raam_agentcoder_50m.yaml` as a rehearsal. The first serious target is `configs/scratch/raam_agentcoder_100m.yaml`. The current research candidate is the compression-only RAAM model with anchors and attention islands disabled, because the matched 100M Vast `1000 -> 1100` step gate beat the pure Mamba-like baseline on validation loss while running faster and using less VRAM. Full RAAM stays available for long-context and ablation runs.
+The first paid Vast.ai run should use `configs/scratch/raam_agentcoder_50m.yaml` as a rehearsal. The first serious target is `configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`. The current research candidate is the compression-only RAAM model with anchors, attention islands, early reconstruction loss, and curriculum MTP disabled. The matched 100M Vast `1000 -> 1100` step gate promoted compression-only RAAM over the pure Mamba-like baseline, but the first expanded Stage 5 run with auxiliary losses improved early and then destabilized, so the next gate must verify the stable schedule before scaling. Full RAAM stays available for long-context and ablation runs.
 
 ## Dataset Choice
 
@@ -237,12 +237,16 @@ wrapper is:
 cd /root/raam-lm
 BASE_DIR=/root/raam-lm \
 DATA_ROOT=/root/data/agentcoder_stage5 \
-RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_candidate \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_stage5_stable \
 STEPS=5000 RESUME_STEPS=5500 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
-It uses a separate expanded data root so the tiny gate corpus remains reproducible.
+It uses a separate expanded data root so the tiny gate corpus remains
+reproducible. By default it uses
+`configs/scratch/raam_agentcoder_100m_stage5_stable.yaml`; set
+`CONFIG=configs/scratch/raam_agentcoder_100m.yaml` only to intentionally rerun the
+older auxiliary-loss schedule.
 
 ## What We Are Not Doing Yet
 
