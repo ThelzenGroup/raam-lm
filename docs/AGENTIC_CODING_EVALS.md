@@ -272,6 +272,27 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
   --clean
 ```
 
+Once a candidate looks best in a one-seed cardinality sweep, do not scale it
+until it survives a small repeatability gate. This compares multiple RAAM anchor
+configs at the hardest current mirrored cardinality:
+
+```bash
+python scripts/run_agentcoder_atomic_anchor_seed_sweep.py \
+  --configs learned=configs/scratch/raam_agentcoder_atomic_anchor_attention_gate.yaml hybrid1=configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --seeds 17,29,41 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 1200 \
+  --output-dir runs/agentcoder_atomic_anchor_seed_sweep_learned_vs_hybrid1 \
+  --device auto \
+  --clean
+```
+
+The aggregate `summary.json` reports per-seed rows, per-config mean/min/max pass
+rates, and the first seed below the selected pass-rate threshold. Treat this as
+a repeatability control only: passing it means the tiny mirrored binding fix is
+less seed-fragile, not that the model can chat or code.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
