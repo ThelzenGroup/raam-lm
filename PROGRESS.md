@@ -738,3 +738,52 @@ vs `3.2376`). Agentic scores remain zero, so this is still base-LM schedule
 evidence only. The next highest-value experiment is a longer `5e-5` continuation
 gate or a checkpoint-export pass around the current step-800 best region for
 qualitative generation inspection.
+
+## Stage 5 50e-6 Step-800 Export
+
+Ran a bounded `5e-5` export pass to capture the current best measured Stage 5
+base-LM region as a compact model-only checkpoint:
+
+```bash
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+RUN_ID=stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+STEPS=801 RESUME_STEPS=801 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=1 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z`.
+The pull is about 194 MB and includes exactly one `.pt` file:
+`current/train/checkpoints/model_only_fp16.pt` with size `201313187` bytes. No
+optimizer `last.pt` or `step_*.pt` checkpoint was pulled. Both Vast RTX 5090
+instances were stopped/exited after the pull.
+
+Export metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Last logged step | 800 |
+| Tokens seen | 52494336 |
+| First validation loss | 10.389572143554688 |
+| Final/best validation loss | 3.0210490942001345 at step 800 |
+| Final train loss | 2.831112861633301 |
+| Final tokens/sec | 239013.06591040603 |
+| Peak allocated VRAM MB | 12309.60498046875 |
+| Non-embedding params | 67080706 |
+| Estimated FLOPs/token | 151132672 |
+| JSON tool-call validity | 0.0 |
+| Mean patch apply rate | 0.0 |
+
+Interpretation: this is the current best measured base-LM checkpoint artifact,
+not a useful chat/coding model yet. It is suitable for qualitative generation
+inspection, model-only storage, or as a baseline point before a longer `5e-5`
+continuation gate.

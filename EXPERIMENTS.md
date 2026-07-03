@@ -96,6 +96,11 @@ validation loss so far, `3.1759` at step 1099. It learns slower early than
 scores remain `0.0`, so the next scaling step should still be a base-LM
 continuation gate, not full chat/agentic training.
 
+Best-region export evidence: a `5e-5` export pass stopped at step 800 and wrote a
+compact `model_only_fp16.pt` checkpoint for qualitative inspection and future
+resume/scaling work. This checkpoint is evidence of the current best measured
+base-LM region, not evidence of useful chat or coding ability.
+
 ## Ablations
 
 - No compression.

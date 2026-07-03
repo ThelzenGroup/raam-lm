@@ -266,6 +266,11 @@ early than `lr75e6`, but it moves the best point later and reduces drift. The ne
 gate should continue from the `5e-5` policy for longer or run a short
 checkpoint-export pass around the step-800 region for qualitative inspection.
 
+A step-800 `5e-5` export pass has produced a compact `model_only_fp16.pt`
+checkpoint. Use this for qualitative inspection or as the current base-LM
+candidate artifact. Do not treat it as a final chat or coding model; agentic eval
+still reports zero JSON/tool-call validity and zero patch apply rate.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:
