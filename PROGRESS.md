@@ -1972,3 +1972,60 @@ larger spend. If `seen_slot` passes but `heldout_slot` fails, the next work is
 architecture/objective/curriculum changes for context binding. If both pass,
 then the slot-copy blocker is no longer the first reason to delay a broader
 chat/coding continuation.
+
+Vast RTX 5090 ladder validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_slotcopy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_slotcopy_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_slotcopy_ladder_20260703T051703Z \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote results:
+
+- focused slot-copy generator tests: `6 passed in 0.12s`
+- full remote test suite: `34 passed in 32.72s`
+- run id: `agentcoder_slotcopy_ladder_20260703T051703Z`
+- train records: `144`
+- eval cases: `96`
+- eval tier counts: `48` `seen_slot`, `48` `heldout_slot`
+- train tokens: `51564`
+- validation tokens: `12756`
+- non-embedding params: `1244802`
+- estimated FLOPs/token: `2336384`
+- final train loss: `0.05523088574409485`
+- final validation loss: `0.2700197398662567`
+- final tokens/sec: `68643.99354831324`
+- exact pass rate: `19 / 96`
+- behavior accuracy: `96 / 96`
+
+| Family | Seen Exact Pass | Held-Out Exact Pass | Seen Slot Errors | Held-Out Slot Errors |
+| --- | ---: | ---: | ---: | ---: |
+| `repo_lookup` | 12 / 16 | 0 / 16 | 4 | 16 |
+| `patch_return` | 2 / 16 | 0 / 16 | 14 | 16 |
+| `patch_literal` | 5 / 16 | 0 / 16 | 11 | 16 |
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_slotcopy_ladder_20260703T051703Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: this confirms the blocker is earlier than held-out
+generalization. The tiny model can classify the requested response family, but
+it does not reliably bind even seen file/function/literal slots when context is
+regenerated. The next useful model step is not a broader chat/coding run. It is
+to make exact slot copying a simpler supervised objective first, likely by
+adding a very small copy-only ladder with short outputs, checking whether a
+Transformer baseline passes it, and only then reintroducing patch formatting and
+repo-context distractors.
+
+After artifact pull, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
