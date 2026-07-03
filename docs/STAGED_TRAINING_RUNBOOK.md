@@ -271,6 +271,23 @@ checkpoint. Use this for qualitative inspection or as the current base-LM
 candidate artifact. Do not treat it as a final chat or coding model; agentic eval
 still reports zero JSON/tool-call validity and zero patch apply rate.
 
+To continue from a model-only export, pass it as `START_CHECKPOINT`. Training will
+load model weights and continue from the stored step. If the checkpoint has no
+optimizer state, the optimizer is freshly initialized and the run manifest records
+`resume_mode: model_only`:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_continue \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+START_CHECKPOINT=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr5e5_export_20260703T012841Z/train/checkpoints/model_only_fp16.pt \
+STEPS=1200 RESUME_STEPS=1200 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

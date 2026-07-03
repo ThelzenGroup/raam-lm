@@ -59,6 +59,16 @@ def save_checkpoint(path: Path, model, optimizer, step: int, config, tokenizer_p
     )
 
 
+def load_resume_checkpoint(path: str, model, optimizer, device) -> tuple[int, bool]:
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint["model_state"])
+    optimizer_loaded = "optimizer_state" in checkpoint and checkpoint["optimizer_state"] is not None
+    if optimizer_loaded:
+        optimizer.load_state_dict(checkpoint["optimizer_state"])
+    start_step = int(checkpoint.get("step", -1)) + 1
+    return max(0, start_step), optimizer_loaded
+
+
 def evaluate(model, dataset, config, device, dtype, global_step: int) -> dict[str, float]:
     model.eval()
     losses: list[float] = []
@@ -134,11 +144,9 @@ def main() -> None:
     model = build_model(config).to(device)
     optimizer = build_optimizer(model, config)
     start_step = 0
+    resume_optimizer_loaded = False
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device)
-        model.load_state_dict(checkpoint["model_state"])
-        optimizer.load_state_dict(checkpoint["optimizer_state"])
-        start_step = int(checkpoint["step"]) + 1
+        start_step, resume_optimizer_loaded = load_resume_checkpoint(args.resume, model, optimizer, device)
 
     train_data = PackedTokenDataset(args.train_bin, seed=config.train.seed)
     val_data = PackedTokenDataset(args.val_bin, seed=config.train.seed + 1)
@@ -156,6 +164,9 @@ def main() -> None:
         "param_count_non_embedding": count_non_embedding_parameters(model),
         "estimated_flops_per_token": est_flops,
         "resume_from": args.resume,
+        "resume_start_step": start_step,
+        "resume_optimizer_loaded": resume_optimizer_loaded,
+        "resume_mode": "optimizer" if resume_optimizer_loaded else ("model_only" if args.resume else "none"),
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     sync_run_dir(output_dir, sync_root)

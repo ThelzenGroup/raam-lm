@@ -8,6 +8,7 @@ RAW_DIR="${RAW_DIR:-$DATA_ROOT/raw}"
 PACKED_DIR="${PACKED_DIR:-$DATA_ROOT/packed_2048}"
 TOKENIZER="${TOKENIZER:-$DATA_ROOT/tokenizer.json}"
 RUN_DIR="${RUN_DIR:-/workspace/raam-lm/runs/raam_agentcoder_50m_rehearsal}"
+START_CHECKPOINT="${START_CHECKPOINT:-}"
 SYNC_DIR="${SYNC_DIR:-}"
 SYNC_EVERY="${SYNC_EVERY:-5}"
 STEPS="${STEPS:-20}"
@@ -79,6 +80,10 @@ if [[ -n "$SYNC_DIR" ]]; then
 fi
 
 train_overrides=()
+resume_args=()
+if [[ -n "$START_CHECKPOINT" ]]; then
+  resume_args=(--resume "$START_CHECKPOINT")
+fi
 if [[ -n "$BATCH_SIZE" ]]; then
   train_overrides+=(--batch-size "$BATCH_SIZE")
 fi
@@ -102,6 +107,7 @@ python scripts/train.py \
   --device cuda \
   --save-every "$SAVE_EVERY" \
   --eval-every "$EVAL_EVERY" \
+  "${resume_args[@]}" \
   "${train_overrides[@]}" \
   "${sync_args[@]}"
 

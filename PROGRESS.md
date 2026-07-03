@@ -787,3 +787,15 @@ Interpretation: this is the current best measured base-LM checkpoint artifact,
 not a useful chat/coding model yet. It is suitable for qualitative generation
 inspection, model-only storage, or as a baseline point before a longer `5e-5`
 continuation gate.
+
+Added model-only resume support:
+
+- `scripts/train.py` now loads checkpoints without `optimizer_state`, starts from
+  `checkpoint.step + 1`, uses a fresh optimizer, and records `resume_mode:
+  model_only` plus `resume_optimizer_loaded: false` in the manifest.
+- `scripts/vast_train_50m.sh`, `scripts/vast_train_100m_candidate.sh`, and
+  `scripts/vast_launch_stage5_gate.sh` now accept `START_CHECKPOINT` for the first
+  training call.
+
+This makes the exported step-800 `model_only_fp16.pt` usable for continuation
+smoke tests and longer fresh-optimizer gates.
