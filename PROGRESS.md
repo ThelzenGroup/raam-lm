@@ -584,3 +584,10 @@ step 500 and drifts upward afterward, so the model is still not ready for a full
 training spend. The next decision is either to export/check around the current
 best region or run one more lower-LR gate (`5e-5` or `7.5e-5`) to test whether the
 validation curve can keep improving beyond 500 steps.
+
+Added next candidate config:
+`configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml`. It keeps the same
+compression-only Stage 5 setup with reconstruction and MTP disabled, but caps LR
+at `0.000075` with `warmup_steps: 500`. This is the next gate to test whether the
+post-500 validation drift keeps shrinking without slowing learning as much as a
+`5e-5` cap.

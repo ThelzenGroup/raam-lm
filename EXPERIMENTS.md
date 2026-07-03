@@ -75,6 +75,10 @@ test an even safer continuation policy: shorter `500 -> 600` checkpoint export f
 the current best region, or a lower `5e-5`/`7.5e-5` LR gate if training beyond
 500 steps is required.
 
+The next lower-LR candidate is
+`configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml`, which keeps the same
+loss and architecture settings as `lr1e4` but caps LR at `0.000075`.
+
 ## Ablations
 
 - No compression.

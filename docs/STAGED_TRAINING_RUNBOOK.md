@@ -228,6 +228,19 @@ as full-training clearance. For a longer paid run, either export around the
 500-step best region first or run one more lower-LR gate (`5e-5` or `7.5e-5`) to
 see whether validation can keep improving past 500 steps.
 
+Next lower-LR gate:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr75e6_gate \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr75e6.yaml \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:
