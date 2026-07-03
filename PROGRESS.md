@@ -1497,3 +1497,113 @@ next resume step is to retry starting `43634442` and run:
   --no-fail
 /venv/main/bin/python -m pytest -q
 ```
+
+## AgentCoder Slot-Diagnostic Gate Run
+
+Implemented and ran the next AgentCoder gate increment to make exact
+slot-binding failures measurable instead of only visible by manual inspection.
+
+Code changes:
+
+- added optional `forbidden_substrings` to curated eval cases
+- made `scripts/eval_overfit_sanity.py` fail cases when forbidden text appears
+- added `present_forbidden_substrings` and `slot_error` to eval artifacts
+- extended `scripts/compare_agentcoder_gates.py` to report forbidden hits and
+  slot errors in JSON and Markdown
+- updated the curated generator to format boolean-flag examples with stronger
+  file/helper/literal copy instructions
+- documented slot-copy diagnostics in `docs/AGENTIC_CODING_EVALS.md`
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_curated_sft.py scripts/eval_overfit_sanity.py scripts/compare_agentcoder_gates.py
+python3 -m pytest -q tests/test_compare_agentcoder_gates.py
+python3 scripts/make_agentcoder_curated_sft.py --train-output work/curated_sft_slot_v4/train.jsonl --cases-output work/curated_sft_slot_v4/cases.json --manifest-output work/curated_sft_slot_v4/manifest.json
+python3 scripts/train_tokenizer.py work/curated_sft_slot_v4/train.jsonl --output work/curated_sft_slot_v4/tokenizer.json --vocab-size 1536
+git diff --check
+```
+
+Results: syntax checks passed, focused comparison tests passed with
+`5 passed`, the v4 generator emitted `96` train records and `10` eval cases,
+and tokenizer training produced `vocab_size=849`.
+
+The local focused generator pytest collection still cannot run on this host
+because local Python does not have `torch` installed:
+
+```text
+ModuleNotFoundError: No module named 'torch'
+```
+
+Remote RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k curated_sft_generator
+/venv/main/bin/python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_curated_gate_slot_20260703T040601Z \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote results:
+
+- focused generator test: `1 passed, 7 deselected`
+- full remote suite: `28 passed in 32.49s`
+- run id: `agentcoder_curated_gate_slot_20260703T040601Z`
+- pass rate: `8 / 10`
+- behavior accuracy: `9 / 10`
+- final validation loss: `0.9754665791988373`
+- final train loss: `0.037981100380420685`
+- final tokens/sec: `68409.00513840611`
+- train records: `96`
+- train tokens: `11459`
+- validation tokens: `3042`
+- non-embedding params: `1244802`
+- estimated FLOPs/token: `2327936`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_curated_gate_slot_20260703T040601Z`.
+
+Comparison report:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/agentcoder_gate_comparison_slot_20260703T040601Z.md`.
+
+| Metric | Curated v1 | Command-disambiguation v2 | Balanced v3 | Collision-aware v3 | Slot-diagnostic v4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Held-out pass rate | 8 / 10 | 7 / 10 | 8 / 10 | 8 / 10 | 8 / 10 |
+| Behavior accuracy | 9 / 10 | 8 / 10 | 9 / 10 | 10 / 10 | 9 / 10 |
+| Train records | 60 | 73 | 96 | 96 | 96 |
+| Train tokens | 7679 | 8695 | 10567 | 11069 | 11459 |
+| Validation tokens | 1543 | 2049 | 2804 | 2856 | 3042 |
+| Final validation loss | 1.5991248786449432 | 0.7426003813743591 | 0.9329699128866196 | 0.9868301898241043 | 0.9754665791988373 |
+| Final tokens/sec | 68901.96115779184 | 83803.19876940553 | 66871.47363583921 | 65994.03447703178 | 68409.00513840611 |
+
+Slot-diagnostic v4 did not improve exact pass rate over collision-aware v3.
+It did improve artifact quality by preserving forbidden-substring and
+`slot_error` fields for future comparisons, but the training change regressed
+one behavior-family decision:
+
+- `curated_repo_lookup`: predicted repo lookup behavior, but copied
+  `render_invoice` / `invoices.py` instead of `normalize_title` / `titles.py`;
+  `slot_error=true`
+- `curated_flag_patch`: produced the addition-patch template for `calc.py`
+  instead of the flag patch for `flags.py`; predicted behavior was
+  `patch_addition`, so this is a behavior regression rather than a pure slot
+  error
+
+Interpretation: the best diagnostic run remains collision-aware v3 because it
+had `10 / 10` behavior accuracy even though exact pass stayed `8 / 10`.
+Slot-diagnostic v4 is useful as scoring infrastructure, but not as a better
+candidate model. The next model-quality step should separate patch families
+more strongly before training: make boolean-flag prompts structurally distinct
+from arithmetic patch prompts, add held-out file/helper/value copy drills, and
+keep forbidden-substring scoring enabled so exact-slot regressions are visible.
+
+After artifact pull, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
