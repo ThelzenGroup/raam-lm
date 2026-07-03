@@ -141,6 +141,41 @@ def build_train_records() -> list[dict[str, Any]]:
             )
         )
 
+    python_file_json_prompts = [
+        "Return strict JSON for a command that lists Python files.",
+        "I need JSON only: a shell command to find .py files.",
+        "Give one JSON object whose cmd finds Python source files.",
+        "As JSON, provide the command for recursively listing Python files.",
+        "Return JSON, not prose, for finding Python files in this repo.",
+        "Write a JSON command that locates files ending in .py.",
+    ]
+    for user in python_file_json_prompts:
+        records.append(
+            record(
+                "command_disambiguation",
+                user,
+                "{\"cmd\": \"find . -type f -name '*.py'\"}",
+                "Returned the Python-file discovery command as JSON.",
+                system_suffix="Distinguish file-discovery commands from test commands. Return strict JSON when asked.",
+            )
+        )
+
+    pytest_json_prompts = [
+        "Return strict JSON for running Python tests.",
+        "I need JSON only: the command to run pytest quietly.",
+        "Give one JSON object whose cmd runs the Python package tests.",
+    ]
+    for user in pytest_json_prompts:
+        records.append(
+            record(
+                "command_disambiguation",
+                user,
+                "{\"cmd\": \"python -m pytest -q\"}",
+                "Returned the pytest command as JSON.",
+                system_suffix="Distinguish test commands from file-discovery commands. Return strict JSON when asked.",
+            )
+        )
+
     risky_prompts = [
         "Before editing production auth code, ask one concise clarifying question.",
         "I want you to change a risky payment file. Ask for the missing safety detail first.",
@@ -266,6 +301,10 @@ def build_train_records() -> list[dict[str, Any]]:
         "Name the safest default test command for a Python package.",
         "I edited Python code. What verification command comes before commit?",
         "Before committing, which command runs the Python tests quietly?",
+        "You edited a Python package. What command should run before committing?",
+        "After changing package code, name the default test command.",
+        "What is the one quiet pytest command to run before commit?",
+        "Before committing this Python change, which test command should I use?",
     ]
     for user in test_prompts:
         records.append(

@@ -86,7 +86,8 @@ This gate generates deterministic synthetic SFT records with multiple
 paraphrases per target behavior, then evaluates separate held-out prompts. It
 covers bug-fix patches, strict JSON command output, risky-edit clarification,
 plain debugging, function completion, stack-trace diagnosis, repo-context lookup,
-test-command recommendation, code review, and commit summaries.
+test-command recommendation, command-intent disambiguation, code review, and
+commit summaries.
 
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before

@@ -147,6 +147,7 @@ def test_curated_sft_generator_has_behavior_coverage():
         "stack_trace_diagnosis",
         "repo_context_lookup",
         "test_command",
+        "command_disambiguation",
     }.issubset(behaviors)
     assert {
         "curated_json_python_files",
