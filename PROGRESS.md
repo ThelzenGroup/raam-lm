@@ -1874,6 +1874,117 @@ tokens, add a contrastive wrong-slot penalty, or test a dense-attention
 Transformer with the same masked objective to separate an objective issue from
 RAAM compression/anchor routing.
 
+## AgentCoder Causal Copy-Head Diagnostic
+
+Added a feature-gated causal pointer-copy path to test whether exact
+current-context copying needs a model-side mechanism rather than only a loss
+mask:
+
+- `src/raam_lm/copy_head.py`
+- `CopyHeadConfig` in `src/raam_lm/config.py`
+- RAAM, Transformer, and pure Mamba-like models can mix normal vocabulary logits
+  with causal copy logits over previous input tokens
+- copy-head FLOPs are included in `estimate_flops_per_token`
+- train logs record `copy_head_enabled`
+- diagnostic configs:
+  - `configs/scratch/raam_agentcoder_atomic_hybrid1_copy_head_gate.yaml`
+  - `configs/scratch/transformer_agentcoder_atomic_copy_head_gate.yaml`
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/copy_head.py src/raam_lm/config.py src/raam_lm/model.py src/raam_lm/baselines/transformer.py src/raam_lm/baselines/mamba_like.py src/raam_lm/flops.py scripts/train.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Result: local focused tests passed, `32 passed in 0.10s`.
+
+The first two remote training attempts exposed copy-head mixed-precision issues:
+
+- `scatter_add_` dtype mismatch under CUDA autocast
+- fp16 overflow from the masked score sentinel
+
+Fixed in commits `898c64b` and `a19d33d` by keeping the pointer-copy math in
+fp32 with autocast disabled inside the copy head. Added remote-covered
+regression tests, including CUDA autocast backward.
+
+Corrected Vast RTX 5090 tests:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+```
+
+Result: `9 passed, 8 deselected` with the expected fallback mixer warning.
+
+Seed-29 copy-head gate at `2400` steps:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_copy_head_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z/raam_seed029_copy_head \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --clean \
+  --no-fail
+```
+
+| Gate | Seed | Exact Pass | Behavior Accuracy | Val Loss | Tokens/sec | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all-token SFT, no copy head | 29 | 31 / 64 | 64 / 64 | 0.087371 | 22018.3 | 1868160 |
+| assistant-only SFT, no copy head | 29 | 19 / 64 | 64 / 64 | 0.266936 | 22027.1 | 1868160 |
+| assistant-only SFT, copy head | 29 | 63 / 64 | 64 / 64 | 0.222196 | 20262.8 | 1950176 |
+
+The single `2400`-step failure copied the correct symbol but the wrong paired
+file:
+
+- requested `symbol=copy_symbol_009` and `file=copy_file_009.py`
+- generated `symbol=copy_symbol_009` and `file=copy_file_058.py`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_copy_head_seed029_steps2400_20260703T090954Z`.
+Checkpoint weights were not pulled.
+
+Longer seed-29 copy-head gate at `3600` steps:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_copy_head_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_copy_head_seed029_steps3600_20260703T091247Z/raam_seed029_copy_head \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 3600 \
+  --clean \
+  --no-fail
+```
+
+Result: still `63 / 64`, behavior accuracy `64 / 64`, final validation loss
+`0.238495`. The remaining failure flipped the same pair:
+
+- requested `symbol=copy_symbol_058` and `file=copy_file_058.py`
+- generated `symbol=copy_symbol_058` and `file=copy_file_009.py`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_copy_head_seed029_steps3600_20260703T091247Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: the causal copy head is the first change that materially fixes
+the fragile seed-29 binding gate, improving exact pass from `31 / 64` to
+`63 / 64`. It does not fully clear the gate. The last blocker is pair
+consistency: the model can copy each field format and usually the current
+symbol, but can still associate the file from a different memorized row. The
+next useful step is a pair-consistency objective or architecture tweak, such as
+contrastive wrong-pair penalties, explicit source-row supervision for copied
+fields, or a copy head that carries a selected source position across adjacent
+slot fields. Do not promote the copy-head variant to broad chat/coding training
+until the corrected three-seed atomic mirror gate reaches `64 / 64` on every
+seed and then passes held-out/decoy slot-copy gates.
+
 ## AgentCoder Atomic Hybrid1 Seed-Fixed Repeatability Gate
 
 Discovered that the earlier atomic anchor seed sweep did not actually vary the
