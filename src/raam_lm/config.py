@@ -53,6 +53,9 @@ class CopyHeadConfig:
     logit_scale: float = 4.0
     temperature: float = 1.0
     include_current_token: bool = True
+    consistency_strength: float = 0.0
+    consistency_recent_tokens: int = 0
+    consistency_source_window: int = 0
 
 
 @dataclass

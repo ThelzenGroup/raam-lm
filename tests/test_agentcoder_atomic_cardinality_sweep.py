@@ -187,6 +187,18 @@ def test_raam_atomic_hybrid1_copy_head_config_enables_pointer_route():
     assert payload["compression"]["token_id_anchor_count"] == 1
 
 
+def test_raam_atomic_hybrid1_pair_copy_head_config_enables_consistency_bias():
+    config_path = Path("configs/scratch/raam_agentcoder_atomic_hybrid1_pair_copy_head_gate.yaml")
+    payload = yaml.safe_load(config_path.read_text())
+
+    assert payload["model_name"] == "raam"
+    assert payload["copy_head"]["enabled"] is True
+    assert payload["copy_head"]["consistency_strength"] > 0
+    assert payload["copy_head"]["consistency_recent_tokens"] == 16
+    assert payload["copy_head"]["consistency_source_window"] == 8
+    assert payload["compression"]["anchor_selection"] == "hybrid_token_id_learned"
+
+
 def test_transformer_atomic_copy_head_config_enables_pointer_route():
     config_path = Path("configs/scratch/transformer_agentcoder_atomic_copy_head_gate.yaml")
     payload = yaml.safe_load(config_path.read_text())

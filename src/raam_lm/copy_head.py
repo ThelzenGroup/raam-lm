@@ -21,6 +21,40 @@ class CausalCopyHead(nn.Module):
         self.query = nn.Linear(d_model, d_copy, bias=False)
         self.key = nn.Linear(d_model, d_copy, bias=False)
 
+    def _consistency_bias(self, input_ids: torch.Tensor, source_mask: torch.Tensor) -> torch.Tensor | None:
+        recent_tokens = max(0, int(self.config.consistency_recent_tokens))
+        source_window = max(0, int(self.config.consistency_source_window))
+        strength = float(self.config.consistency_strength)
+        if not strength or not recent_tokens or not source_window:
+            return None
+
+        bsz, seq_len = input_ids.shape
+        positions = torch.arange(seq_len, device=input_ids.device)
+        bias = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        causal_sources = source_mask[0]
+        comparisons = 0
+        # Use the current token plus recent context to favor source positions whose
+        # preceding neighborhood contains the same already-generated binding token.
+        for recent_offset in range(recent_tokens):
+            recent_valid = positions >= recent_offset
+            recent_pos = (positions - recent_offset).clamp_min(0)
+            recent_ids = input_ids[:, recent_pos]
+            for source_offset in range(-source_window, 1):
+                source_pos = positions + source_offset
+                source_valid = (source_pos >= 0) & (source_pos < seq_len)
+                clipped_source_pos = source_pos.clamp(0, seq_len - 1)
+                source_ids = input_ids[:, clipped_source_pos]
+                pair_valid = (
+                    recent_valid[:, None]
+                    & source_valid[None, :]
+                    & (source_pos[None, :] <= positions[:, None])
+                    & causal_sources
+                )
+                matches = recent_ids[:, :, None] == source_ids[:, None, :]
+                bias = bias + (matches & pair_valid.unsqueeze(0)).to(dtype=bias.dtype)
+                comparisons += 1
+        return bias * (strength / max(comparisons, 1))
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -40,6 +74,9 @@ class CausalCopyHead(nn.Module):
             offset = 0 if self.config.include_current_token else 1
             causal_mask = torch.ones(seq_len, seq_len, device=hidden.device, dtype=torch.bool).tril(diagonal=-offset)
             source_mask = causal_mask.unsqueeze(0)
+            consistency_bias = self._consistency_bias(input_ids, source_mask)
+            if consistency_bias is not None:
+                scores = scores + consistency_bias
             scores = scores.masked_fill(~source_mask, -1.0e9)
             copy_probs_by_pos = torch.softmax(scores, dim=-1)
             copy_probs_by_pos = copy_probs_by_pos * source_mask.to(dtype=copy_probs_by_pos.dtype)

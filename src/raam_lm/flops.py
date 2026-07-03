@@ -53,4 +53,8 @@ def estimate_flops_per_token(config: ModelConfig) -> int:
     if config.copy_head.enabled:
         d_copy = int(config.copy_head.d_copy or d)
         copy = 2 * d * d_copy + 4 * seq * d_copy + seq
+        if config.copy_head.consistency_strength:
+            recent = max(0, int(config.copy_head.consistency_recent_tokens))
+            window = max(0, int(config.copy_head.consistency_source_window))
+            copy += seq * recent * (window + 1)
     return int(body + head + mtp + copy)

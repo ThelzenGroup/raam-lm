@@ -28,6 +28,26 @@ def test_causal_copy_head_boosts_visible_context_tokens():
     assert out[0, 2, 7] < out[0, 2, 5]
 
 
+def test_causal_copy_head_consistency_bias_prefers_same_source_row():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        consistency_strength=8.0,
+        consistency_recent_tokens=2,
+        consistency_source_window=2,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 9, 4)
+    input_ids = torch.tensor([[10, 101, 20, 201, 10, 102, 20, 202, 101]])
+    lm_logits = torch.zeros(1, 9, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 8, 201] > out[0, 8, 202]
+
+
 def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
     head = CausalCopyHead(d_model=4, vocab_size=32, config=config)
