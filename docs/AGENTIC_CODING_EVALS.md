@@ -160,6 +160,23 @@ ability; failing it means the pipeline cannot yet learn the most basic exact
 copy control. After mirror passes, use `--eval-mode ladder --no-mirror-val` to
 add held-out slots back in.
 
+When one-record mirror overfit passes but larger mirror runs fail, locate the
+binding break point with the cardinality sweep:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep \
+  --device auto \
+  --clean
+```
+
+By default this runs RAAM and the tiny Transformer baseline at
+`1,2,4,8,16,32,64` train records, with mirrored eval cases matched to the train
+record count. The aggregate `summary.json` records the first cardinality below
+the selected pass-rate threshold for each model. The sweep intentionally uses
+`--no-fail` for each sub-run unless `--fail-on-gate` is passed, because a low
+pass rate is the measurement.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
