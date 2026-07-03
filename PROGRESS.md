@@ -1879,6 +1879,98 @@ an exact binding preservation problem rather than a chat-format problem. Before
 larger chat/coding training, the next useful test is a targeted RAAM ablation
 with dynamic hourglass compression disabled on the same sweep.
 
+## AgentCoder RAAM No-Compression Cardinality Ablation
+
+Added:
+
+- `configs/scratch/raam_agentcoder_atomic_no_compression_gate.yaml`
+
+This config keeps the same tiny RAAM backbone scale and training budget as the
+atomic copy gate, but disables dynamic hourglass compression:
+
+- `use_dynamic_hourglass_compression: false`
+- `compression.enabled: false`
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py scripts/make_agentcoder_atomic_copy_sft.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+for path in [
+    Path('configs/scratch/raam_agentcoder_atomic_copy_gate.yaml'),
+    Path('configs/scratch/raam_agentcoder_atomic_no_compression_gate.yaml'),
+]:
+    data = yaml.safe_load(path.read_text())
+    print(path, data['model_name'], data['use_dynamic_hourglass_compression'], data['compression']['enabled'], data['train']['seq_len'])
+PY
+git diff --check
+```
+
+Results:
+
+- focused local tests passed: `13 passed in 0.05s`
+- config parse confirmed full RAAM has compression enabled and the ablation has
+  compression disabled
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_no_compression_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_raam_no_compression_20260703T062016Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `13 passed in 0.08s`
+- remote config parse confirmed `False False` for
+  `use_dynamic_hourglass_compression` and `compression.enabled`
+- full remote test suite passed after the run: `50 passed in 33.00s`
+- eval policy: mirrored eval with eval cases matched to train-record count
+- `mirror_val: true`
+- default train budget: `1200` steps per sub-run
+
+| Bindings | RAAM No-Compression Exact Pass | Val Loss | Tokens/sec |
+| ---: | ---: | ---: | ---: |
+| 4 | 1 / 4 | 0.045245 | 31768 |
+| 8 | 1 / 8 | 0.064115 | 31479 |
+| 16 | 1 / 16 | 0.073701 | 31784 |
+| 32 | 1 / 32 | 0.089397 | 31430 |
+| 64 | 1 / 64 | 0.109869 | 31479 |
+
+Representative failures:
+
+- no-compression `n=4` collapsed three failed prompts to
+  `copy_symbol_002` / `copy_file_002.py`.
+- no-compression `n=16` collapsed failed prompts to `copy_symbol_001` /
+  `copy_file_001.py`.
+- no-compression `n=64` collapsed failed prompts to `copy_symbol_056` /
+  `copy_file_056.py`.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_raam_no_compression_20260703T062016Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: disabling dynamic hourglass compression did not fix exact
+binding; it made this gate worse. Full RAAM's compression is not the sole cause
+of the failure and may be helping the tiny model retain some binding signal.
+The next useful model-side test is to add an exact token-level path back into
+the RAAM atomic config, likely via attention islands or anchor-preserved
+local-global routing, and rerun the same cardinality sweep before any larger
+chat/coding training.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
