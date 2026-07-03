@@ -1790,6 +1790,97 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## Pair-Consistency Copy-Head Gate
+
+Added an opt-in copy-head consistency bias for the fragile atomic binding gate.
+The bias compares the current token plus recent context against the causal
+source-side neighborhood before each candidate copied token. The goal is to
+prefer a file token whose source row also contained the just-emitted symbol,
+instead of copying a valid file token from a different row.
+
+Added:
+
+- `CopyHeadConfig.consistency_strength`
+- `CopyHeadConfig.consistency_recent_tokens`
+- `CopyHeadConfig.consistency_source_window`
+- `configs/scratch/raam_agentcoder_atomic_hybrid1_pair_copy_head_gate.yaml`
+- a focused same-row preference test in `tests/test_copy_head.py`
+- config coverage in `tests/test_agentcoder_atomic_cardinality_sweep.py`
+
+Local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/copy_head.py src/raam_lm/config.py src/raam_lm/flops.py tests/test_copy_head.py tests/test_agentcoder_atomic_cardinality_sweep.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused non-Torch local tests passed: `33 passed in 0.12s`
+- `git diff --check` passed
+- local `python3 -m pytest -q tests/test_copy_head.py` is blocked in this
+  workspace by `ModuleNotFoundError: No module named 'torch'`; the same test was
+  run on the Vast PyTorch environment below
+
+Remote validation first exposed a real test failure:
+
+- run root: `agentcoder_atomic_hybrid1_pair_copy_head_seed029_steps2400_20260703T092545Z`
+- failure: `test_causal_copy_head_consistency_bias_prefers_same_source_row`
+- cause: the current symbol and an older recent token could tie the two source
+  rows
+- fix: weight the current token more strongly than older recent tokens in the
+  consistency bias
+
+Vast RTX 5090 validation after the fix:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_pair_copy_head_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_pair_copy_head_seed029_steps2400_20260703T092706Z/raam_seed029_pair_copy_head \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --clean \
+  --no-fail
+```
+
+Remote results:
+
+- copy-head and masking tests: `10 passed, 8 deselected`
+- atomic config/generator tests: `33 passed in 0.15s`
+- train records: `64`
+- eval cases: `64`
+- assistant-only loss: `true`
+- behavior accuracy: `64 / 64`
+- exact pass: `63 / 64`
+- final validation next-token loss: `0.266976`
+- tokens/sec: `14011.4`
+- estimated FLOPs/token: `1964000`
+
+Remaining failure:
+
+- `atomic_mirror_009`
+- expected `symbol=copy_symbol_009` and `file=copy_file_009.py`
+- completed `symbol=copy_symbol_009` and `file=copy_file_010.py`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_pair_copy_head_seed029_steps2400_20260703T092706Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: the pair-consistency bias is valid enough to keep as an
+opt-in diagnostic, but it did not improve the prior best `63 / 64` seed-29
+copy-head result. It changed the remaining error from the earlier far-row
+`009`/`058` swap to an adjacent-row `009`/`010` file slip. The next useful model
+step is a stronger binding-carry diagnostic: after emitting the copied symbol,
+track or reselect the source row position and constrain the following copied
+slot value to come from that same row, then re-run the same `64`-binding gate.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
