@@ -105,9 +105,9 @@ def build_train_records() -> list[dict[str, Any]]:
         ("totals.py", "def combine(x, y):\n    return x - y", "def combine(x, y):\n    return x + y", "tests/test_totals.py"),
     ]
     add_prompts = [
-        "The helper fails because it subtracts. Provide a minimal patch and test command.",
-        "A test expected addition but the function returns subtraction. Patch it and name the focused pytest command.",
-        "Fix this arithmetic bug with a tiny diff and say which test to run.",
+        "Patch task, not just a test-command question. The helper fails because it subtracts. Provide a minimal diff and then a focused test command.",
+        "Patch task: a test expected addition but the function returns subtraction. Emit the diff first, then name the focused pytest command.",
+        "Fix this arithmetic bug with a tiny diff first, then say which focused test to run.",
     ]
     for idx, (path, before, after, test_path) in enumerate(add_variants):
         repo = f"file: {path}\n```python\n{before}\n```"
@@ -359,18 +359,18 @@ def build_train_records() -> list[dict[str, Any]]:
     ]
     repo_variants = [
         (
-            "format_title",
-            "blog.py",
-            "from title_tools import format_title\nprint(format_title('hello world'))",
-            "title_tools.py",
-            "def format_title(text):\n    return text.strip().title()",
+            "title_case",
+            "blog_preview.py",
+            "from titles import title_case\nprint(title_case('hello world'))",
+            "titles.py",
+            "def title_case(text):\n    return text.strip().title()",
         ),
         (
-            "clean_heading",
+            "normalize_heading",
             "posts.py",
-            "from headings import clean_heading\nprint(clean_heading(' Intro '))",
+            "from headings import normalize_heading\nprint(normalize_heading(' Intro '))",
             "headings.py",
-            "def clean_heading(text):\n    return text.strip().capitalize()",
+            "def normalize_heading(text):\n    return text.strip().capitalize()",
         ),
         (
             "normalize_path",
@@ -394,18 +394,18 @@ def build_train_records() -> list[dict[str, Any]]:
             "def validate_email(value):\n    return '@' in value",
         ),
         (
-            "render_invoice",
-            "routes.py",
-            "from invoices import render_invoice\nBODY = render_invoice({'id': 7})",
-            "invoices.py",
-            "def render_invoice(invoice):\n    return str(invoice)",
+            "normalize_slug",
+            "docs.py",
+            "from slugs import normalize_slug\nSLUG = normalize_slug('Hello World')",
+            "slugs.py",
+            "def normalize_slug(text):\n    return text.strip().lower().replace(' ', '-')",
         ),
         (
-            "build_parser",
-            "main.py",
-            "from cli_parser import build_parser\nPARSER = build_parser()",
-            "cli_parser.py",
-            "def build_parser():\n    return object()",
+            "normalize_user",
+            "accounts.py",
+            "from user_names import normalize_user\nNAME = normalize_user(' Ada ')",
+            "user_names.py",
+            "def normalize_user(name):\n    return name.strip().title()",
         ),
         (
             "save_user",
@@ -424,7 +424,7 @@ def build_train_records() -> list[dict[str, Any]]:
                 "repo_context_lookup",
                 (
                     f"Repo lookup task. Requested symbol: {func}. "
-                    f"Find `def {func}` and ignore unrelated definitions such as add, slugify, or parse_port."
+                    f"Read repo_context, find `def {func}`, and ignore unrelated definitions such as add, slugify, or parse_port."
                 ),
                 f"{func} is implemented in {impl_file}. That file contains def {func}.",
                 f"The implementation is in {impl_file}.",
@@ -541,7 +541,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
             "curated_add_patch",
             chat_prompt(
                 "Preserve exact patches and include a focused test command.",
-                "Fix add and name the focused test command.",
+                "Patch task, not just a test-command question. Fix add with a diff first, then name the focused test command.",
                 "file: calc.py\n```python\ndef add(a, b):\n    return a - b\n```",
             ),
             ["return a + b", "pytest"],
@@ -590,9 +590,9 @@ def build_eval_cases() -> list[dict[str, Any]]:
             chat_prompt(
                 (
                     "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
-                    "Find the matching def line and do not substitute another symbol from the context or training examples."
+                    "Read the repo_context, find the matching def line, and do not substitute another symbol from the context or training examples."
                 ),
-                "Repo lookup task. Requested symbol: normalize_title. Find `def normalize_title` and ignore unrelated definitions such as add, slugify, or parse_port.",
+                "Repo lookup task. Requested symbol: normalize_title. Read repo_context, find `def normalize_title`, and ignore unrelated definitions such as add, slugify, or parse_port.",
                 "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
             ["normalize_title is implemented in titles.py"],
@@ -676,8 +676,8 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v6",
-        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics, patch-family separation, and repo lookup distractors; not a benchmark dataset.",
+        "format": "agentcoder-curated-sft-v7",
+        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics, patch/test-command separation, and repo lookup distractors; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, indent=2, sort_keys=True))

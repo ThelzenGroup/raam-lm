@@ -105,13 +105,21 @@ present.
 Repo-lookup training records include distractor files with familiar definitions
 such as `add`, `slugify`, and `parse_port`. The model must bind the requested
 symbol to the matching `def` line instead of replaying a frequent symbol/file
-pair from another training example.
+pair from another training example. The tiny curriculum also avoids near-duplicate
+`title_tools.py` examples around the held-out `normalize_title` case, and instead
+uses nearby but distinct `title_case` and `normalize_*` drills to test slot
+binding without handing the exact answer to the model.
 
 Boolean-flag patch cases are intentionally shaped differently from arithmetic
 bug-fix patches. They name themselves as boolean flag repair, avoid focused
 pytest-command language, and require the exact file/helper/enabled-literal
 slots. This keeps a model from passing by emitting the familiar addition-patch
 template when the task is really a feature-flag literal fix.
+
+Arithmetic bug-fix patch cases are also shaped away from generic test-command
+recommendations: prompts explicitly ask for the diff first and the focused test
+command second. A response that only names `python -m pytest -q` is a behavior
+confusion, not a patch pass.
 
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before

@@ -162,6 +162,7 @@ def test_curated_sft_generator_has_behavior_coverage():
     }.issubset(case_names)
     assert all("expected_behavior" in row for row in cases)
     case_by_name = {row["name"]: row for row in cases}
+    assert "diff first" in case_by_name["curated_add_patch"]["prompt"]
     assert "Do not write code" in case_by_name["curated_debugging"]["prompt"]
     assert "Find `def normalize_title`" in case_by_name["curated_repo_lookup"]["prompt"]
     assert "normalize_title is implemented in titles.py" in case_by_name["curated_repo_lookup"]["required_substrings"]
@@ -172,7 +173,9 @@ def test_curated_sft_generator_has_behavior_coverage():
     repo_records = [row for row in records if row["behavior"] == "repo_context_lookup"]
     assert all("Find the matching def line" in row["system"] for row in repo_records)
     assert all("file: calc.py" in row["repo_context"] for row in repo_records)
-    assert any("format_title is implemented in title_tools.py" in row["trace"][0]["content"] for row in repo_records)
+    assert any("title_case is implemented in titles.py" in row["trace"][0]["content"] for row in repo_records)
+    assert all("title_tools.py" not in row["trace"][0]["content"] for row in repo_records)
+    assert any("normalize_slug is implemented in slugs.py" in row["trace"][0]["content"] for row in repo_records)
     assert all("add is implemented in calc.py" not in row["trace"][0]["content"] for row in repo_records)
     assert {"--- a/flags.py", "def is_enabled(value):", "return value == 'true'"}.issubset(
         set(case_by_name["curated_flag_patch"]["required_substrings"])
