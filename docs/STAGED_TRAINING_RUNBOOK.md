@@ -260,6 +260,12 @@ EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
 bash scripts/vast_train_100m_candidate.sh
 ```
 
+The `lr5e5` gate is now the safest measured Stage 5 schedule: best validation
+`3.0210` at step 800 and final validation `3.1759` at step 1099. It is slower
+early than `lr75e6`, but it moves the best point later and reduces drift. The next
+gate should continue from the `5e-5` policy for longer or run a short
+checkpoint-export pass around the step-800 region for qualitative inspection.
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

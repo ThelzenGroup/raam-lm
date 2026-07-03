@@ -89,6 +89,13 @@ current step-600 best region for qualitative inspection.
 The next LR candidate is `configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml`,
 which caps LR at `0.00005` with the same 500-step warmup.
 
+`lr5e5` gate evidence: this is now the safest measured Stage 5 schedule. It
+reaches a near-tied best validation loss, `3.0210` at step 800, and the best final
+validation loss so far, `3.1759` at step 1099. It learns slower early than
+`lr75e6`, but shifts the best point later and reduces end-of-run drift. Agentic
+scores remain `0.0`, so the next scaling step should still be a base-LM
+continuation gate, not full chat/agentic training.
+
 ## Ablations
 
 - No compression.
