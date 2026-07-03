@@ -1790,6 +1790,90 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## AgentCoder Assistant-Only Atomic Mask Gate
+
+Added assistant-only SFT loss masking for structured JSONL packing and training:
+
+- `scripts/pack_dataset.py --assistant-loss-only`
+- `pack_documents(..., assistant_loss_only=True)` now writes
+  `train_loss_mask.bin` and `val_loss_mask.bin`
+- `PackedTokenDataset` can return token-aligned loss masks
+- `scripts/train.py` auto-detects sibling `*_loss_mask.bin` files, records them
+  in the train manifest, and logs `loss_mask_fraction`
+- RAAM, Transformer, and pure Mamba-like forward methods accept `loss_mask`
+- `scripts/run_agentcoder_atomic_copy_gate.py` defaults to assistant-only loss
+  masking, with `--no-assistant-loss-only` available for reproducing older
+  all-token gates
+
+Initial local validation:
+
+```bash
+python3 -m py_compile src/raam_lm/agent_data.py src/raam_lm/losses.py src/raam_lm/model.py src/raam_lm/baselines/transformer.py src/raam_lm/baselines/mamba_like.py scripts/pack_dataset.py scripts/train.py scripts/run_agentcoder_atomic_copy_gate.py scripts/run_agentcoder_atomic_anchor_seed_sweep.py scripts/run_agentcoder_atomic_cardinality_sweep.py
+python3 -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Result: local atomic tests passed, `30 passed in 0.09s`.
+
+The first remote attempt exposed a CLI forwarding bug: the command included
+`--assistant-loss-only`, but the packed manifest still reported
+`assistant_loss_only: false`. Fixed in commit `739b89f` by forwarding the flag
+into `pack_documents`, and added a CLI-level regression test.
+
+Corrected Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_pipeline.py -k 'assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_anchor_seed_sweep.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_hybrid1_seed029_masked_steps2400_20260703T085307Z/raam_seed029_masked \
+  --device cuda \
+  --seed 29 \
+  --train-records 64 \
+  --eval-cases 64 \
+  --steps 2400 \
+  --clean \
+  --no-fail
+```
+
+Remote test results:
+
+- mask-specific pipeline tests: `3 passed, 8 deselected in 3.37s`
+- atomic tests: `30 passed in 0.11s`
+- packed manifest: `assistant_loss_only: true`
+- supervised loss tokens: `832 / 6272` train tokens and `832 / 6272` validation
+  tokens
+- train manifest recorded both loss-mask files
+- final train log mask fraction: about `0.1328`
+
+Masked seed-29 gate result:
+
+| Objective | Seed | Exact Pass | Behavior Accuracy | Slot Errors | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all-token SFT, previous corrected gate | 29 | 31 / 64 | 64 / 64 | 33 | 0.087371 | 22018.3 |
+| assistant-only masked SFT | 29 | 19 / 64 | 64 / 64 | 45 | 0.266936 | 22027.1 |
+
+Representative masked failure:
+
+- requested `symbol=copy_symbol_002` and `file=copy_file_002.py`
+- generated `symbol=copy_symbol_001` and `file=copy_file_001.py`
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_hybrid1_seed029_masked_steps2400_20260703T085307Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: assistant-only masking is correct SFT infrastructure and should
+remain available, but it is not the slot-binding fix. On the fragile seed it
+made exact binding worse while preserving behavior accuracy, which means the
+model still knows the requested output family but does not reliably select the
+current prompt's symbol/file pair. The next useful model step is a stronger
+current-context binding mechanism or objective, not just more answer-token
+weighting. Candidate next gates: add explicit pointer/copy supervision for slot
+tokens, add a contrastive wrong-slot penalty, or test a dense-attention
+Transformer with the same masked objective to separate an objective issue from
+RAAM compression/anchor routing.
+
 ## AgentCoder Atomic Hybrid1 Seed-Fixed Repeatability Gate
 
 Discovered that the earlier atomic anchor seed sweep did not actually vary the
