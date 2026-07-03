@@ -424,7 +424,7 @@ def build_train_records() -> list[dict[str, Any]]:
                 "repo_context_lookup",
                 (
                     f"Repo lookup task. Requested symbol: {func}. "
-                    f"Read repo_context, find `def {func}`, and ignore unrelated definitions such as add, slugify, or parse_port."
+                    f"Read repo_context. Find `def {func}` and ignore unrelated definitions such as add, slugify, or parse_port."
                 ),
                 f"{func} is implemented in {impl_file}. That file contains def {func}.",
                 f"The implementation is in {impl_file}.",
@@ -592,7 +592,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
                     "Use repo context when it is provided. Answer with the exact requested symbol and its defining file. "
                     "Read the repo_context, find the matching def line, and do not substitute another symbol from the context or training examples."
                 ),
-                "Repo lookup task. Requested symbol: normalize_title. Read repo_context, find `def normalize_title`, and ignore unrelated definitions such as add, slugify, or parse_port.",
+                "Repo lookup task. Requested symbol: normalize_title. Read repo_context. Find `def normalize_title` and ignore unrelated definitions such as add, slugify, or parse_port.",
                 "file: blog.py\n```python\nfrom titles import normalize_title\nprint(normalize_title('Hello World'))\n```\nfile: titles.py\n```python\ndef normalize_title(text):\n    return text.strip().title()\n```",
             ),
             ["normalize_title is implemented in titles.py"],
