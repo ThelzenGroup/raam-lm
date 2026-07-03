@@ -68,3 +68,26 @@ This gate uses normal train/validation splitting and held-out eval prompts. It
 is still deliberately tiny, so failure is not a model-quality verdict. Its job
 is to catch whether the format learned in the mirrored gate survives a small
 non-mirrored slice before moving back to larger paid runs.
+
+## Curated Paraphrase SFT Gate
+
+If the small slice gate shows nearest-neighbor memorization, run the broader
+curated gate:
+
+```bash
+python scripts/run_agentcoder_curated_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir runs/agentcoder_curated_gate \
+  --device auto \
+  --clean
+```
+
+This gate generates deterministic synthetic SFT records with multiple
+paraphrases per target behavior, then evaluates separate held-out prompts. It
+covers bug-fix patches, strict JSON command output, risky-edit clarification,
+plain debugging, function completion, stack-trace diagnosis, repo-context lookup,
+test-command recommendation, code review, and commit summaries.
+
+Passing this gate still does not prove a useful model. It is a cheap control
+that checks whether the pipeline can learn reusable behavior patterns before
+spending on a larger supervised or continuation run.

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scripts.make_agentcoder_curated_sft import build_eval_cases, build_train_records
 from raam_lm.agent_data import pack_binary_shards, pack_documents, render_agent_record, write_int32_tokens
 from raam_lm.tokenization import AgentCoderTokenizer, train_agent_tokenizer
 
@@ -127,6 +128,31 @@ def test_binary_shard_packing(tmp_path):
     assert manifest["train_tokens"] > 0
     assert manifest["val_tokens"] > 0
     assert (tmp_path / "packed_bin" / "train.bin").exists()
+
+
+def test_curated_sft_generator_has_behavior_coverage():
+    records = build_train_records()
+    cases = build_eval_cases()
+    behaviors = {row["behavior"] for row in records}
+    case_names = {row["name"] for row in cases}
+
+    assert len(records) >= 60
+    assert len(cases) >= 8
+    assert {
+        "patch_addition",
+        "json_tool_command",
+        "risky_clarifying_question",
+        "plain_debugging",
+        "function_completion",
+        "stack_trace_diagnosis",
+        "repo_context_lookup",
+        "test_command",
+    }.issubset(behaviors)
+    assert {
+        "curated_json_python_files",
+        "curated_risky_question",
+        "curated_is_even_completion",
+    }.issubset(case_names)
 
 
 def test_train_resume_generate_and_agentic_eval(tmp_path):
