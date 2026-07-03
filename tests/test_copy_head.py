@@ -48,6 +48,28 @@ def test_causal_copy_head_consistency_bias_prefers_same_source_row():
     assert out[0, 8, 201] > out[0, 8, 202]
 
 
+def test_causal_copy_head_binding_carry_prefers_target_after_rare_recent_anchor():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        binding_carry_strength=10.0,
+        binding_carry_recent_tokens=4,
+        binding_carry_source_window=3,
+        binding_carry_min_source_gap=2,
+        binding_carry_max_anchor_occurrences=3,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 9, 4)
+    input_ids = torch.tensor([[101, 77, 201, 102, 77, 202, 101, 77, 55]])
+    lm_logits = torch.zeros(1, 9, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 8, 201] > out[0, 8, 202]
+
+
 def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     config = CopyHeadConfig(enabled=True, d_copy=4, logit_scale=4.0)
     head = CausalCopyHead(d_model=4, vocab_size=32, config=config)
@@ -56,6 +78,30 @@ def test_causal_copy_head_ignores_future_token_ids_for_earlier_logits():
     lm_logits = torch.zeros(1, 5, 32)
     base_ids = torch.tensor([[2, 4, 6, 8, 10]])
     changed_future_ids = torch.tensor([[2, 4, 6, 21, 22]])
+
+    base = head(hidden, base_ids, lm_logits)
+    changed = head(hidden, changed_future_ids, lm_logits)
+
+    torch.testing.assert_close(base[:, :3], changed[:, :3])
+
+
+def test_causal_copy_head_binding_carry_ignores_future_token_ids_for_earlier_logits():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        binding_carry_strength=10.0,
+        binding_carry_recent_tokens=4,
+        binding_carry_source_window=3,
+        binding_carry_min_source_gap=1,
+        binding_carry_max_anchor_occurrences=3,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=64, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 8, 4)
+    lm_logits = torch.zeros(1, 8, 64)
+    base_ids = torch.tensor([[2, 4, 6, 8, 10, 12, 14, 16]])
+    changed_future_ids = torch.tensor([[2, 4, 6, 21, 22, 23, 24, 25]])
 
     base = head(hidden, base_ids, lm_logits)
     changed = head(hidden, changed_future_ids, lm_logits)

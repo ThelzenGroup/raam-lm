@@ -56,6 +56,54 @@ class CausalCopyHead(nn.Module):
                 comparison_weight += recent_weight
         return bias * (strength / max(comparison_weight, 1.0))
 
+    def _binding_carry_probs_by_pos(
+        self,
+        input_ids: torch.Tensor,
+        source_mask: torch.Tensor,
+    ) -> torch.Tensor | None:
+        recent_tokens = max(0, int(self.config.binding_carry_recent_tokens))
+        source_window = max(0, int(self.config.binding_carry_source_window))
+        strength = float(self.config.binding_carry_strength)
+        if not strength or not recent_tokens or not source_window:
+            return None
+
+        bsz, seq_len = input_ids.shape
+        min_source_gap = max(0, int(self.config.binding_carry_min_source_gap))
+        max_anchor_occurrences = max(0, int(self.config.binding_carry_max_anchor_occurrences))
+        positions = torch.arange(seq_len, device=input_ids.device)
+        carry = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        causal_sources = source_mask[0]
+        if min_source_gap:
+            causal_sources = causal_sources & ((positions[:, None] - positions[None, :]) >= min_source_gap)
+        visible_prefix = positions[None, :] <= positions[:, None]
+
+        # Carry a rare, recently emitted binding token forward to source tokens
+        # that follow the same token in the causal context row.
+        for recent_offset in range(1, recent_tokens + 1):
+            recent_weight = float(recent_tokens - recent_offset + 1)
+            recent_valid = positions >= recent_offset
+            recent_pos = (positions - recent_offset).clamp_min(0)
+            recent_ids = input_ids[:, recent_pos]
+            if max_anchor_occurrences:
+                visible_matches = input_ids[:, None, :] == recent_ids[:, :, None]
+                occurrence_counts = (visible_matches & visible_prefix.unsqueeze(0)).sum(dim=-1)
+                recent_valid_by_batch = occurrence_counts <= max_anchor_occurrences
+            else:
+                recent_valid_by_batch = torch.ones(bsz, seq_len, device=input_ids.device, dtype=torch.bool)
+
+            for source_distance in range(1, source_window + 1):
+                anchor_pos = positions - source_distance
+                anchor_valid = anchor_pos >= 0
+                clipped_anchor_pos = anchor_pos.clamp(0, seq_len - 1)
+                anchor_ids = input_ids[:, clipped_anchor_pos]
+                pair_valid = recent_valid[:, None] & anchor_valid[None, :] & causal_sources
+                matches = recent_ids[:, :, None] == anchor_ids[:, None, :]
+                valid = pair_valid.unsqueeze(0) & recent_valid_by_batch[:, :, None]
+                carry = carry + recent_weight * (matches & valid).to(dtype=carry.dtype)
+
+        denom = carry.sum(dim=-1, keepdim=True)
+        return torch.where(denom > 0, carry / denom.clamp_min(1e-12), torch.zeros_like(carry))
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -93,4 +141,12 @@ class CausalCopyHead(nn.Module):
             index = input_ids.unsqueeze(1).expand(bsz, seq_len, seq_len)
             copy_probs_by_vocab.scatter_add_(dim=-1, index=index, src=copy_probs_by_pos)
             copy_logits = torch.log(copy_probs_by_vocab.clamp_min(1e-12)) + float(self.config.logit_scale)
+            carry_probs_by_pos = self._binding_carry_probs_by_pos(input_ids, source_mask)
+            if carry_probs_by_pos is not None:
+                carry_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
+                carry_probs_by_vocab.scatter_add_(dim=-1, index=index, src=carry_probs_by_pos)
+                carry_logits = torch.log(carry_probs_by_vocab.clamp_min(1e-12)) + float(
+                    self.config.binding_carry_strength
+                )
+                copy_logits = torch.logaddexp(copy_logits, carry_logits)
             return torch.logaddexp(lm_logits, copy_logits)

@@ -56,6 +56,11 @@ class CopyHeadConfig:
     consistency_strength: float = 0.0
     consistency_recent_tokens: int = 0
     consistency_source_window: int = 0
+    binding_carry_strength: float = 0.0
+    binding_carry_recent_tokens: int = 0
+    binding_carry_source_window: int = 0
+    binding_carry_min_source_gap: int = 0
+    binding_carry_max_anchor_occurrences: int = 0
 
 
 @dataclass

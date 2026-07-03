@@ -57,4 +57,9 @@ def estimate_flops_per_token(config: ModelConfig) -> int:
             recent = max(0, int(config.copy_head.consistency_recent_tokens))
             window = max(0, int(config.copy_head.consistency_source_window))
             copy += seq * recent * (window + 1)
+        if config.copy_head.binding_carry_strength:
+            recent = max(0, int(config.copy_head.binding_carry_recent_tokens))
+            window = max(0, int(config.copy_head.binding_carry_source_window))
+            occurrence_scan = seq if config.copy_head.binding_carry_max_anchor_occurrences else 0
+            copy += seq * recent * (window + occurrence_scan + 1)
     return int(body + head + mtp + copy)
