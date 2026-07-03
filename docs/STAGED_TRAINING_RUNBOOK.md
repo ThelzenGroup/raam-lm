@@ -209,6 +209,19 @@ validation worsened. Before a full training run, run a learning-rate gate that
 keeps reconstruction/MTP disabled and caps the maximum LR below the value reached
 after step 500.
 
+Recommended LR gate:
+
+```bash
+cd /root/raam-lm
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RUN_DIR=/root/raam-lm/runs/stage5_raam_agentcoder_100m_lr1e4_gate \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr1e4.yaml \
+STEPS=1000 RESUME_STEPS=1100 SAVE_EVERY=0 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=0 KEEP_TRAINING_CHECKPOINTS=0 \
+bash scripts/vast_train_100m_candidate.sh
+```
+
 ## Stage 6: Decision Gate
 
 Continue RAAM only if it has evidence under matched comparisons:

@@ -62,6 +62,11 @@ best `3.1310` at step 500, then worsened to `4.5944` by step 1099. The next
 experiment should keep the stable loss setup but lower/cap the learning rate or
 shorten warmup before any full training spend.
 
+The first capped-LR candidate is
+`configs/scratch/raam_agentcoder_100m_stage5_lr1e4.yaml`: same data, architecture,
+and disabled auxiliary-loss setup as the stable gate, but with `lr: 0.0001` and
+`warmup_steps: 500`.
+
 ## Ablations
 
 - No compression.

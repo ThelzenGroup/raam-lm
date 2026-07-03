@@ -510,3 +510,10 @@ full training. The validation curve still peaks around step 500 and then degrade
 while the LR is still warming up. The next highest-value experiment is a stable
 Stage 5 learning-rate gate: same data and loss setup, but cap LR around the step
 500 value or use a shorter/lower warmup before spending on a longer run.
+
+Added next candidate config:
+`configs/scratch/raam_agentcoder_100m_stage5_lr1e4.yaml`. It keeps the same
+compression-only Stage 5 setup with reconstruction and MTP disabled, but changes
+the optimizer schedule to `lr: 0.0001` and `warmup_steps: 500` so the LR is capped
+near the previous run's best-validation region instead of continuing to rise past
+step 500.
