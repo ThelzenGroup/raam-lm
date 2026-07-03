@@ -89,11 +89,18 @@ completion, stack-trace diagnosis, repo-context lookup, test-command
 recommendation, command-intent disambiguation, code review, boolean-flag patching,
 and commit summaries.
 
-The eval summary also reports a behavior confusion matrix. Exact pass/fail still
-comes from required substrings and expected JSON, but the confusion matrix shows
-whether a failed answer looked like the wrong behavior family, for example
-answering a risky-edit question with a JSON command or answering a boolean-flag
-patch prompt with a generic addition patch.
+The eval summary also reports a behavior confusion matrix. Exact pass/fail comes
+from required substrings, forbidden substrings, and expected JSON. The confusion
+matrix shows whether a failed answer looked like the wrong behavior family, for
+example answering a risky-edit question with a JSON command or answering a
+boolean-flag patch prompt with a generic addition patch.
+
+Some cases also include forbidden substrings to catch slot-copying failures:
+right behavior, wrong symbol/file/literal. For example, a repo lookup can have
+the correct "implemented in" style while naming a stale function or file from a
+nearby training example. Those failures are reported as `slot_error` when the
+behavior family is correct but required text is missing or forbidden text is
+present.
 
 Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
@@ -121,7 +128,7 @@ By default, the comparison script recomputes behavior labels from completions
 with the current heuristic. Pass `--prefer-stored-behavior` when you need to
 replay the labels saved inside the original artifact exactly.
 
-When exact pass rate stalls but behavior accuracy improves, treat the remaining
-errors as slot-copying failures rather than broad behavior failures. Typical
-examples are choosing the correct repo-lookup style but naming the wrong file,
-or producing the right kind of patch for the wrong helper/value pair.
+When exact pass rate stalls but behavior accuracy improves, inspect
+`slot_error`, `missing_required_substrings`, and `present_forbidden_substrings`.
+Typical examples are choosing the correct repo-lookup style but naming the wrong
+file, or producing the right kind of patch for the wrong helper/value pair.

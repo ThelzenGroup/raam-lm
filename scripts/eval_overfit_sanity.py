@@ -180,10 +180,14 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
         required = case.get("required_substrings", [])
         if not isinstance(required, list):
             raise ValueError(f"case {index} required_substrings must be a list")
+        forbidden = case.get("forbidden_substrings", [])
+        if not isinstance(forbidden, list):
+            raise ValueError(f"case {index} forbidden_substrings must be a list")
         item = {
             "name": str(case.get("name", f"case_{index:02d}")),
             "prompt": str(case["prompt"]),
             "required_substrings": [str(value) for value in required],
+            "forbidden_substrings": [str(value) for value in forbidden],
         }
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
@@ -321,21 +325,26 @@ def generate(
 
 def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     missing = [needle for needle in case["required_substrings"] if needle not in completion]
+    present_forbidden = [needle for needle in case.get("forbidden_substrings", []) if needle in completion]
     expected_json = case.get("expected_json")
     parsed_json = first_json_object(completion) if expected_json is not None else None
     json_ok = parsed_json == expected_json if expected_json is not None else None
     expected_behavior = case.get("expected_behavior")
     predicted_behavior = infer_behavior(completion)
     behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
-    passed = not missing and (json_ok is not False)
+    passed = not missing and not present_forbidden and (json_ok is not False)
+    slot_error = bool(behavior_correct and (missing or present_forbidden))
     return {
         "missing_required_substrings": missing,
+        "forbidden_substrings": case.get("forbidden_substrings", []),
+        "present_forbidden_substrings": present_forbidden,
         "expected_json": expected_json,
         "parsed_json": parsed_json,
         "json_ok": json_ok,
         "expected_behavior": expected_behavior,
         "predicted_behavior": predicted_behavior,
         "behavior_correct": behavior_correct,
+        "slot_error": slot_error,
         "passed": passed,
     }
 

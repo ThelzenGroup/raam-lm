@@ -164,7 +164,10 @@ def test_curated_sft_generator_has_behavior_coverage():
     case_by_name = {row["name"]: row for row in cases}
     assert "Do not write code" in case_by_name["curated_debugging"]["prompt"]
     assert "normalize_title is implemented in titles.py" in case_by_name["curated_repo_lookup"]["required_substrings"]
+    assert {"slugify", "names.py", "calc.py"}.issubset(set(case_by_name["curated_repo_lookup"]["forbidden_substrings"]))
     assert "calc.py" not in case_by_name["curated_repo_lookup"]["prompt"]
+    assert {"toggles.py", "cache_enabled", "== 'on'"}.issubset(set(case_by_name["curated_flag_patch"]["forbidden_substrings"]))
+    assert "Copy the exact file path" in case_by_name["curated_flag_patch"]["prompt"]
 
 
 def test_train_resume_generate_and_agentic_eval(tmp_path):

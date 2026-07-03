@@ -45,6 +45,8 @@ def test_summarize_curated_gate_with_inferred_confusion(tmp_path):
                     "passed": False,
                     "completion": "{\"cmd\": \"find . -type f -name '*.py'\"}",
                     "missing_required_substrings": ["rollback"],
+                    "forbidden_substrings": ["*.py"],
+                    "present_forbidden_substrings": ["*.py"],
                     "json_ok": None,
                 },
             ]
@@ -59,6 +61,7 @@ def test_summarize_curated_gate_with_inferred_confusion(tmp_path):
     assert row["behavior_confusion"]["risky_clarifying_question"]["json_tool_command"] == 1
     assert row["failed_cases"][0]["expected_behavior"] == "risky_clarifying_question"
     assert row["failed_cases"][0]["predicted_behavior"] == "json_tool_command"
+    assert row["failed_cases"][0]["present_forbidden_substrings"] == ["*.py"]
 
 
 def test_write_markdown_includes_failures(tmp_path):
@@ -77,6 +80,8 @@ def test_write_markdown_includes_failures(tmp_path):
                         "expected_behavior": "risky_clarifying_question",
                         "predicted_behavior": "json_tool_command",
                         "missing_required_substrings": ["rollback"],
+                        "present_forbidden_substrings": ["*.py"],
+                        "slot_error": False,
                         "json_ok": None,
                         "completion_preview": "{\"cmd\": \"find .\"}",
                     }
@@ -92,7 +97,34 @@ def test_write_markdown_includes_failures(tmp_path):
     text = output.read_text()
     assert "AgentCoder Gate Comparison" in text
     assert "curated_risky_question" in text
+    assert "forbidden" in text
     assert "risky_clarifying_question -> json_tool_command: 1" in text
+
+
+def test_slot_error_is_inferred_when_behavior_matches_but_slot_is_wrong(tmp_path):
+    run_dir = tmp_path / "run"
+    write_json(run_dir / "summary.json", {"pass_count": 0, "case_count": 1, "pass_rate": 0.0})
+    write_json(
+        run_dir / "curated_eval.json",
+        {
+            "results": [
+                {
+                    "name": "curated_repo_lookup",
+                    "passed": False,
+                    "completion": "slugify is implemented in names.py.",
+                    "missing_required_substrings": ["normalize_title is implemented in titles.py"],
+                    "present_forbidden_substrings": ["slugify", "names.py"],
+                    "json_ok": None,
+                }
+            ]
+        },
+    )
+
+    row = summarize_run(run_dir)
+
+    assert row["failed_cases"][0]["predicted_behavior"] == "repo_context_lookup"
+    assert row["failed_cases"][0]["slot_error"] is True
+    assert row["failed_cases"][0]["present_forbidden_substrings"] == ["slugify", "names.py"]
 
 
 def test_port_review_inference_beats_generic_valueerror():

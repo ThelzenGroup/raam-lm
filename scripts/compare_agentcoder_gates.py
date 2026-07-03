@@ -135,16 +135,26 @@ def summarize_run(run_dir: Path, *, prefer_stored_behavior: bool = False) -> dic
     for row in results:
         if row.get("passed"):
             continue
+        predicted_behavior = (
+            row.get("predicted_behavior")
+            if prefer_stored_behavior and row.get("predicted_behavior")
+            else infer_behavior(str(row.get("completion", "")))
+        )
+        expected_behavior = row.get("expected_behavior") or CURATED_CASE_BEHAVIORS.get(str(row.get("name")))
+        missing = row.get("missing_required_substrings", [])
+        present_forbidden = row.get("present_forbidden_substrings", [])
+        slot_error = bool(row.get("slot_error"))
+        if not slot_error and expected_behavior == predicted_behavior and (missing or present_forbidden):
+            slot_error = True
         failed_cases.append(
             {
                 "name": row.get("name"),
-                "expected_behavior": row.get("expected_behavior") or CURATED_CASE_BEHAVIORS.get(str(row.get("name"))),
-                "predicted_behavior": (
-                    row.get("predicted_behavior")
-                    if prefer_stored_behavior and row.get("predicted_behavior")
-                    else infer_behavior(str(row.get("completion", "")))
-                ),
-                "missing_required_substrings": row.get("missing_required_substrings", []),
+                "expected_behavior": expected_behavior,
+                "predicted_behavior": predicted_behavior,
+                "missing_required_substrings": missing,
+                "forbidden_substrings": row.get("forbidden_substrings", []),
+                "present_forbidden_substrings": present_forbidden,
+                "slot_error": slot_error,
                 "json_ok": row.get("json_ok"),
                 "completion_preview": preview(str(row.get("completion", ""))),
             }
@@ -212,10 +222,11 @@ def write_markdown(rows: list[dict[str, Any]], output: Path) -> None:
         if not failed:
             lines.append("No exact gate failures.")
         else:
-            lines.append("| case | expected behavior | predicted behavior | missing | JSON ok | completion preview |")
-            lines.append("| --- | --- | --- | --- | --- | --- |")
+            lines.append("| case | expected behavior | predicted behavior | missing | forbidden | slot error | JSON ok | completion preview |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
             for case in failed:
                 missing = ", ".join(str(value) for value in case.get("missing_required_substrings", []))
+                forbidden = ", ".join(str(value) for value in case.get("present_forbidden_substrings", []))
                 lines.append(
                     "| "
                     + " | ".join(
@@ -224,6 +235,8 @@ def write_markdown(rows: list[dict[str, Any]], output: Path) -> None:
                             format_value(case.get("expected_behavior")),
                             format_value(case.get("predicted_behavior")),
                             missing,
+                            forbidden,
+                            format_value(case.get("slot_error")),
                             format_value(case.get("json_ok")),
                             format_value(case.get("completion_preview")).replace("|", "\\|"),
                         ]

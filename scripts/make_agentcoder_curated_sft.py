@@ -40,6 +40,7 @@ def case(
     *,
     expected_behavior: str,
     expected_json: Any | None = None,
+    forbidden_substrings: list[str] | None = None,
 ) -> dict[str, Any]:
     item = {
         "name": name,
@@ -49,6 +50,8 @@ def case(
     }
     if expected_json is not None:
         item["expected_json"] = expected_json
+    if forbidden_substrings:
+        item["forbidden_substrings"] = forbidden_substrings
     return item
 
 
@@ -138,10 +141,10 @@ def build_train_records() -> list[dict[str, Any]]:
         records.append(
             record(
                 "patch_boolean_flag",
-                "The boolean helper is inverted. Provide the minimal patch.",
-                patch_text(path, before, after, "The comparison is inverted; compare against the enabled value."),
+                f"In {path}, the boolean helper is inverted. Patch only that file and preserve the shown helper name and literal.",
+                patch_text(path, before, after, f"In {path}, compare against the enabled value from the shown helper."),
                 f"Changed {path} to compare against the enabled value.",
-                system_suffix="Prefer minimal diffs.",
+                system_suffix="Copy the exact file path, helper name, and enabled literal from the current repo context. Prefer minimal diffs.",
                 repo_context=f"file: {path}\n```python\n{before}\n```",
             )
         )
@@ -357,7 +360,7 @@ def build_train_records() -> list[dict[str, Any]]:
                 f"Where is {func} implemented?",
                 f"{func} is implemented in {impl_file}. That is the file containing def {func}.",
                 f"The implementation is in {impl_file}.",
-                system_suffix="Use repo context when it is provided. Cite the file that defines the function, not the file that imports it.",
+                system_suffix="Use repo context when it is provided. Copy the exact requested symbol and cite the file that defines it, not the file that imports it.",
                 repo_context=repo,
             )
         )
@@ -500,6 +503,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
             chat_prompt("Complete Python functions safely.", "Complete this function:\n```python\ndef is_even(n):\n```"),
             ["def is_even(n):", "return n % 2 == 0"],
             expected_behavior="function_completion",
+            forbidden_substrings=["is_odd", "return n % 2 == 1"],
         ),
         case(
             "curated_stack_valueerror",
@@ -519,6 +523,7 @@ def build_eval_cases() -> list[dict[str, Any]]:
             ),
             ["normalize_title is implemented in titles.py"],
             expected_behavior="repo_context_lookup",
+            forbidden_substrings=["slugify", "names.py", "add is implemented", "calc.py", "parse_port", "config.py"],
         ),
         case(
             "curated_test_command",
@@ -535,12 +540,13 @@ def build_eval_cases() -> list[dict[str, Any]]:
         case(
             "curated_flag_patch",
             chat_prompt(
-                "Prefer minimal diffs.",
+                "Copy the exact file path, helper name, and enabled literal from the current repo context. Prefer minimal diffs.",
                 "The enabled flag is inverted. Patch it.",
                 "file: flags.py\n```python\ndef is_enabled(value):\n    return value == 'false'\n```",
             ),
             ["return value == 'true'"],
             expected_behavior="patch_boolean_flag",
+            forbidden_substrings=["toggles.py", "cache_enabled", "== 'on'", "== 'off'", "settings.py", "feature_on"],
         ),
     ]
 
@@ -573,8 +579,8 @@ def main() -> None:
         "eval_cases": len(eval_cases),
         "behavior_counts": dict(sorted(counts.items())),
         "balanced_behavior_target": BALANCED_BEHAVIOR_TARGET,
-        "format": "agentcoder-curated-sft-v3",
-        "note": "Deterministic synthetic supervision for gate testing; not a benchmark dataset.",
+        "format": "agentcoder-curated-sft-v4",
+        "note": "Deterministic synthetic supervision for gate testing with slot-copy diagnostics; not a benchmark dataset.",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, indent=2, sort_keys=True))
