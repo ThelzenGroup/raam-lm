@@ -2029,3 +2029,107 @@ After artifact pull, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## AgentCoder Copy-Only Binding Gate
+
+Implemented the simpler diagnostic that the previous slot-binding ladder called
+for: short `key=value` copy-only outputs, no diffs, no patch prose, no test
+command wording beyond copying a `test=<path>` slot. Also added a matched tiny
+Transformer config so the failure can be checked against a dense-attention
+baseline before blaming RAAM compression.
+
+Added:
+
+- `scripts/make_agentcoder_copyonly_sft.py`
+- `scripts/run_agentcoder_copy_gate.py`
+- `configs/scratch/raam_agentcoder_copy_gate.yaml`
+- `configs/scratch/transformer_agentcoder_copy_gate.yaml`
+- `tests/test_agentcoder_copyonly_generator.py`
+
+Updated:
+
+- `scripts/eval_overfit_sanity.py` now recognizes `copy_slot_values`
+  completions containing `symbol=`, `file=`, `helper=`, `return=`, `literal=`,
+  or `test=`.
+- `docs/AGENTIC_CODING_EVALS.md` documents the copy-only gate and the baseline
+  interpretation.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_copyonly_sft.py scripts/run_agentcoder_copy_gate.py scripts/eval_overfit_sanity.py scripts/make_agentcoder_slotcopy_sft.py scripts/run_agentcoder_slotcopy_gate.py
+rm -rf work/copyonly_gate_smoke && python3 scripts/make_agentcoder_copyonly_sft.py --train-output work/copyonly_gate_smoke/train.jsonl --cases-output work/copyonly_gate_smoke/cases.json --manifest-output work/copyonly_gate_smoke/manifest.json --eval-mode ladder
+python3 -m pytest -q tests/test_agentcoder_copyonly_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- generator emitted format `agentcoder-copyonly-sft-v1`
+- train records: `144`
+- eval cases: `96`
+- eval tier counts: `48` `seen_slot`, `48` `heldout_slot`
+- focused local tests passed: `9 passed in 0.12s`
+- `git diff --check` passed
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_copyonly_generator.py tests/test_agentcoder_slotcopy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_copyonly_baseline_20260703T052913Z/raam \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python scripts/run_agentcoder_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_copy_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_copyonly_baseline_20260703T052913Z/transformer \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Remote results:
+
+- focused copy/slot generator tests: `9 passed in 0.16s`
+- full remote test suite: `37 passed in 32.91s`
+- run root: `agentcoder_copyonly_baseline_20260703T052913Z`
+- train records: `144`
+- eval cases: `96`
+- train tokens: `32924`
+- validation tokens: `8356`
+- behavior accuracy: `96 / 96` for both models
+
+| Model | Exact Pass | Seen Exact Pass | Held-Out Exact Pass | Val Loss | Tokens/sec | Non-Emb Params | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM copy gate | 22 / 96 | 22 / 48 | 0 / 48 | 0.302754 | 50450.0 | 1244802 | 2305152 |
+| Transformer copy gate | 18 / 96 | 18 / 48 | 0 / 48 | 0.268684 | 48099.0 | 1049728 | 2684928 |
+
+| Family | RAAM Seen | RAAM Held-Out | Transformer Seen | Transformer Held-Out |
+| --- | ---: | ---: | ---: | ---: |
+| `repo_lookup_copy` | 14 / 16 | 0 / 16 | 11 / 16 | 0 / 16 |
+| `patch_return_copy` | 5 / 16 | 0 / 16 | 3 / 16 | 0 / 16 |
+| `patch_literal_copy` | 3 / 16 | 0 / 16 | 4 / 16 | 0 / 16 |
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_copyonly_baseline_20260703T052913Z`.
+Checkpoint weights were not pulled.
+
+Interpretation: simplifying the output helped only slightly. The held-out
+failure is not RAAM-specific because the tiny Transformer baseline also scored
+`0 / 48` held-out. RAAM is a little better on seen-slot exact pass, but neither
+model can treat the current context as a reliable binding table yet. The next
+useful step is to make an even smaller atomic copy task with one family, one
+slot pair, no decoys, and mirrored validation first. Only after that passes
+should we add decoys, multiple fields, held-out slots, and then patch formatting
+back in.
+
+After artifact pull, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
