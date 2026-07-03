@@ -32,10 +32,11 @@ class CausalCopyHead(nn.Module):
         positions = torch.arange(seq_len, device=input_ids.device)
         bias = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
         causal_sources = source_mask[0]
-        comparisons = 0
+        comparison_weight = 0.0
         # Use the current token plus recent context to favor source positions whose
         # preceding neighborhood contains the same already-generated binding token.
         for recent_offset in range(recent_tokens):
+            recent_weight = float(recent_tokens - recent_offset)
             recent_valid = positions >= recent_offset
             recent_pos = (positions - recent_offset).clamp_min(0)
             recent_ids = input_ids[:, recent_pos]
@@ -51,9 +52,9 @@ class CausalCopyHead(nn.Module):
                     & causal_sources
                 )
                 matches = recent_ids[:, :, None] == source_ids[:, None, :]
-                bias = bias + (matches & pair_valid.unsqueeze(0)).to(dtype=bias.dtype)
-                comparisons += 1
-        return bias * (strength / max(comparisons, 1))
+                bias = bias + recent_weight * (matches & pair_valid.unsqueeze(0)).to(dtype=bias.dtype)
+                comparison_weight += recent_weight
+        return bias * (strength / max(comparison_weight, 1.0))
 
     def forward(
         self,
