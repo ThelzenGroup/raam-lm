@@ -87,6 +87,24 @@ def test_dataset_packing(tmp_path):
     assert (tmp_path / "packed" / "val.bin").exists()
 
 
+def test_dataset_packing_can_mirror_validation_for_overfit(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    write_tiny_agentic(data)
+    tokenizer = train_agent_tokenizer([data], vocab_size=384)
+    manifest = pack_documents(
+        [data],
+        tokenizer,
+        tmp_path / "packed",
+        seq_len=32,
+        val_fraction=0.5,
+        mirror_val=True,
+    )
+
+    assert manifest["mirror_val"] is True
+    assert manifest["train_docs"] == manifest["val_docs"] == 2
+    assert manifest["train_tokens"] == manifest["val_tokens"]
+
+
 def test_dataset_packing_skips_manifest_metadata(tmp_path):
     data_dir = tmp_path / "raw"
     data_dir.mkdir()

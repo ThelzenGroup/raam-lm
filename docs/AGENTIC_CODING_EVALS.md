@@ -20,3 +20,32 @@ Logged fields include:
 
 Future evals should add real repository tasks with expected patches and test commands.
 
+## Curated Overfit Sanity Gate
+
+Before paying for larger chat/coding runs, run the tiny overfit gate:
+
+```bash
+python scripts/run_agentcoder_overfit_sanity.py \
+  --config configs/scratch/raam_agentcoder_overfit.yaml \
+  --data examples/agentcoder_overfit_sanity.jsonl \
+  --output-dir runs/agentcoder_overfit_sanity \
+  --device auto \
+  --clean
+```
+
+This is not a benchmark. It deliberately mirrors the tiny dataset into both
+train and validation splits, then checks whether the model can memorize exact
+chat/software-engineering behaviors:
+
+- minimal bug-fix patch plus `pytest` command
+- valid JSON command response
+- risky-edit clarifying question
+- plain-English debugging process
+- simple Python function completion
+- stack-trace diagnosis
+- repo-context lookup
+- default package test command
+
+If this gate fails, do not treat more tokens or bigger paid runs as the next
+fix. Inspect formatting, tokenizer coverage, prompt boundaries, EOS behavior,
+loss/objective settings, and generation settings first.

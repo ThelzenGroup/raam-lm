@@ -108,13 +108,18 @@ def pack_documents(
     seq_len: int,
     val_fraction: float = 0.1,
     seed: int = 17,
+    mirror_val: bool = False,
 ) -> dict[str, Any]:
     docs = load_documents(input_paths)
     rng = random.Random(seed)
     rng.shuffle(docs)
-    val_count = max(1, int(round(len(docs) * val_fraction))) if len(docs) > 1 else 1
-    val_docs = docs[:val_count]
-    train_docs = docs[val_count:] or docs[:]
+    if mirror_val:
+        train_docs = docs
+        val_docs = docs
+    else:
+        val_count = max(1, int(round(len(docs) * val_fraction))) if len(docs) > 1 else 1
+        val_docs = docs[:val_count]
+        train_docs = docs[val_count:] or docs[:]
 
     def encode_docs(items: list[dict[str, Any]]) -> list[int]:
         tokens: list[int] = []
@@ -137,6 +142,7 @@ def pack_documents(
         "val_tokens": len(val_tokens),
         "train_docs": len(train_docs),
         "val_docs": len(val_docs),
+        "mirror_val": mirror_val,
         "documents": [{"source": doc["source"], "hash": doc["hash"]} for doc in docs],
         "format": "int32-token-stream-v1",
     }
@@ -161,6 +167,7 @@ def pack_binary_shards(
     seq_len: int,
     val_fraction: float = 0.1,
     seed: int = 17,
+    mirror_val: bool = False,
 ) -> dict[str, Any]:
     files = list(iter_binary_files(input_paths))
     if not files:
@@ -173,9 +180,13 @@ def pack_binary_shards(
         chunks = [tokens[i : i + seq_len] for i in range(0, len(tokens), seq_len)]
         rng.shuffle(chunks)
         tokens = [token for chunk in chunks for token in chunk]
-    val_count = max(1, int(round(len(tokens) * val_fraction))) if len(tokens) > 1 else 1
-    val_tokens = tokens[:val_count]
-    train_tokens = tokens[val_count:] or tokens[:]
+    if mirror_val:
+        train_tokens = tokens
+        val_tokens = tokens
+    else:
+        val_count = max(1, int(round(len(tokens) * val_fraction))) if len(tokens) > 1 else 1
+        val_tokens = tokens[:val_count]
+        train_tokens = tokens[val_count:] or tokens[:]
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     write_int32_tokens(output_dir / "train.bin", train_tokens)
@@ -189,6 +200,7 @@ def pack_binary_shards(
         "source_shards": [str(path) for path in files],
         "format": "int32-token-stream-v1",
         "input_type": "binary_shards",
+        "mirror_val": mirror_val,
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest

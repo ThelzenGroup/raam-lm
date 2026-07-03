@@ -20,6 +20,11 @@ def main() -> None:
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=17)
+    parser.add_argument(
+        "--mirror-val",
+        action="store_true",
+        help="Use the same tokens for train and validation; intended for tiny overfit sanity checks.",
+    )
     args = parser.parse_args()
     if all(str(path).endswith(".bin") for path in args.inputs):
         manifest = pack_binary_shards(
@@ -28,6 +33,7 @@ def main() -> None:
             seq_len=args.seq_len,
             val_fraction=args.val_fraction,
             seed=args.seed,
+            mirror_val=args.mirror_val,
         )
     else:
         if args.tokenizer is None:
@@ -40,6 +46,7 @@ def main() -> None:
             seq_len=args.seq_len,
             val_fraction=args.val_fraction,
             seed=args.seed,
+            mirror_val=args.mirror_val,
         )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
