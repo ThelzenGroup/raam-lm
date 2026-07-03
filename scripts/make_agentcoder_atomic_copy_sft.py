@@ -70,23 +70,42 @@ def case(name: str, row: dict[str, str], eval_tier: str) -> dict[str, Any]:
     }
 
 
-def build_train_records(seed: int = DEFAULT_SEED) -> list[dict[str, Any]]:
+def build_train_records(seed: int = DEFAULT_SEED, train_records: int = TRAIN_RECORDS) -> list[dict[str, Any]]:
     del seed
-    return [record(spec(index)) for index in range(TRAIN_RECORDS)]
+    if train_records < 1:
+        raise ValueError("train_records must be positive")
+    return [record(spec(index)) for index in range(train_records)]
 
 
-def build_eval_cases(seed: int = DEFAULT_SEED, eval_mode: str = "mirror") -> list[dict[str, Any]]:
+def build_eval_cases(
+    seed: int = DEFAULT_SEED,
+    eval_mode: str = "mirror",
+    train_records: int = TRAIN_RECORDS,
+    eval_cases: int = EVAL_CASES,
+) -> list[dict[str, Any]]:
     del seed
+    if train_records < 1:
+        raise ValueError("train_records must be positive")
+    if eval_cases < 1:
+        raise ValueError("eval_cases must be positive")
     if eval_mode == "mirror":
-        return [case(f"atomic_mirror_{index:03d}", spec(index), "mirror_slot") for index in range(EVAL_CASES)]
+        return [
+            case(f"atomic_mirror_{index:03d}", spec(index % train_records), "mirror_slot")
+            for index in range(eval_cases)
+        ]
     if eval_mode == "heldout":
-        start = TRAIN_RECORDS
-        return [case(f"atomic_heldout_{index:03d}", spec(start + index), "heldout_slot") for index in range(EVAL_CASES)]
+        return [
+            case(f"atomic_heldout_{index:03d}", spec(train_records + index), "heldout_slot")
+            for index in range(eval_cases)
+        ]
     if eval_mode == "ladder":
-        mirror = [case(f"atomic_mirror_{index:03d}", spec(index), "mirror_slot") for index in range(EVAL_CASES)]
+        mirror = [
+            case(f"atomic_mirror_{index:03d}", spec(index % train_records), "mirror_slot")
+            for index in range(eval_cases)
+        ]
         heldout = [
-            case(f"atomic_heldout_{index:03d}", spec(TRAIN_RECORDS + index), "heldout_slot")
-            for index in range(EVAL_CASES)
+            case(f"atomic_heldout_{index:03d}", spec(train_records + index), "heldout_slot")
+            for index in range(eval_cases)
         ]
         return mirror + heldout
     raise ValueError("eval_mode must be 'mirror', 'heldout', or 'ladder'")
@@ -104,10 +123,17 @@ def main() -> None:
     parser.add_argument("--manifest-output", default="examples/agentcoder_atomic_copy_manifest.json")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--eval-mode", choices=["mirror", "heldout", "ladder"], default="mirror")
+    parser.add_argument("--train-records", type=int, default=TRAIN_RECORDS)
+    parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
     args = parser.parse_args()
 
-    train_records = build_train_records(seed=args.seed)
-    eval_cases = build_eval_cases(seed=args.seed, eval_mode=args.eval_mode)
+    train_records = build_train_records(seed=args.seed, train_records=args.train_records)
+    eval_cases = build_eval_cases(
+        seed=args.seed,
+        eval_mode=args.eval_mode,
+        train_records=args.train_records,
+        eval_cases=args.eval_cases,
+    )
     train_path = Path(args.train_output)
     cases_path = Path(args.cases_output)
     manifest_path = Path(args.manifest_output)
@@ -128,6 +154,8 @@ def main() -> None:
         "cases_output": str(cases_path),
         "train_records": len(train_records),
         "eval_cases": len(eval_cases),
+        "requested_train_records": args.train_records,
+        "requested_eval_cases": args.eval_cases,
         "behavior_counts": dict(sorted(behavior_counts.items())),
         "train_slot_family_counts": dict(sorted(train_family_counts.items())),
         "eval_slot_family_counts": dict(sorted(eval_family_counts.items())),

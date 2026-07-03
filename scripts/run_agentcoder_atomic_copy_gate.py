@@ -33,6 +33,8 @@ def main() -> None:
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--eval-batches", type=int, default=None)
     parser.add_argument("--eval-mode", choices=["mirror", "heldout", "ladder"], default="mirror")
+    parser.add_argument("--train-records", type=int, default=64)
+    parser.add_argument("--eval-cases", type=int, default=32)
     parser.add_argument("--max-new-tokens", type=int, default=24)
     parser.add_argument("--min-pass-rate", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=17)
@@ -70,6 +72,10 @@ def main() -> None:
             str(args.seed),
             "--eval-mode",
             args.eval_mode,
+            "--train-records",
+            str(args.train_records),
+            "--eval-cases",
+            str(args.eval_cases),
         ]
     )
     run(

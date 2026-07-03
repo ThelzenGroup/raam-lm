@@ -51,6 +51,21 @@ def test_atomic_copy_mirror_and_heldout_splits_are_explicit():
     assert {row["eval_tier"] for row in ladder_cases} == {"mirror_slot", "heldout_slot"}
 
 
+def test_atomic_copy_single_record_mode_reuses_one_train_slot():
+    records = build_train_records(seed=17, train_records=1)
+    cases = build_eval_cases(seed=17, eval_mode="mirror", train_records=1, eval_cases=4)
+
+    assert len(records) == 1
+    assert len(cases) == 4
+    assert {slots(row) for row in cases} == {slots(records[0])}
+    assert [row["name"] for row in cases] == [
+        "atomic_mirror_000",
+        "atomic_mirror_001",
+        "atomic_mirror_002",
+        "atomic_mirror_003",
+    ]
+
+
 def test_atomic_copy_required_outputs_are_two_key_value_lines():
     case = build_eval_cases(seed=17, eval_mode="mirror")[0]
 
@@ -78,6 +93,10 @@ def test_atomic_copy_cli_writes_manifest_and_cases(tmp_path):
             str(manifest),
             "--eval-mode",
             "ladder",
+            "--train-records",
+            "1",
+            "--eval-cases",
+            "2",
         ],
         cwd=ROOT,
         check=True,
@@ -86,11 +105,13 @@ def test_atomic_copy_cli_writes_manifest_and_cases(tmp_path):
     payload = json.loads(manifest.read_text())
     assert payload["format"] == "agentcoder-atomic-copy-sft-v1"
     assert payload["eval_mode"] == "ladder"
-    assert payload["train_records"] == TRAIN_RECORDS
-    assert payload["eval_cases"] == EVAL_CASES * 2
+    assert payload["train_records"] == 1
+    assert payload["eval_cases"] == 4
+    assert payload["requested_train_records"] == 1
+    assert payload["requested_eval_cases"] == 2
     assert payload["eval_tier_counts"] == {
-        "heldout_slot": EVAL_CASES,
-        "mirror_slot": EVAL_CASES,
+        "heldout_slot": 2,
+        "mirror_slot": 2,
     }
     assert train.exists()
     assert cases.exists()
