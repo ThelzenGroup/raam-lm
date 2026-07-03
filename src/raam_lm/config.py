@@ -86,6 +86,8 @@ class CopyHeadConfig:
     request_key_follow_query_ignore_token_ids: list[int] = field(default_factory=list)
     request_key_follow_prompt_suffix_tokens: int = 0
     request_key_follow_prefix_tokens: int = 1
+    request_key_follow_stop_strength: float = 0.0
+    request_key_follow_stop_emit_token_id: int = -1
 
 
 @dataclass

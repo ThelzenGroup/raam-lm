@@ -231,13 +231,15 @@ class CausalCopyHead(nn.Module):
         self,
         input_ids: torch.Tensor,
         source_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None] | None:
         strength = float(self.config.request_key_follow_strength)
         continuation_strength = float(
             self.config.request_key_follow_continuation_strength
             or self.config.request_key_follow_strength
         )
-        if not strength and not continuation_strength:
+        stop_strength = float(self.config.request_key_follow_stop_strength)
+        stop_emit_token_id = int(self.config.request_key_follow_stop_emit_token_id)
+        if not strength and not continuation_strength and not stop_strength:
             return None
 
         bsz, seq_len = input_ids.shape
@@ -282,6 +284,7 @@ class CausalCopyHead(nn.Module):
             source_stop_mask = source_stop_mask | (input_ids == token_id)
         source_not_stopped = ~source_stop_mask
         source_stop_prefix = source_stop_mask.to(dtype=torch.int64).cumsum(dim=1)
+        source_stop_prefix_before = source_stop_prefix - source_stop_mask.to(dtype=torch.int64)
 
         request_after_positions = torch.where(
             input_ids == request_after_token_id,
@@ -339,6 +342,15 @@ class CausalCopyHead(nn.Module):
 
         first_follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
         continuation_follow = torch.zeros_like(first_follow)
+        stop_emit_probs_by_vocab = None
+        if stop_strength and stop_emit_token_id >= 0:
+            stop_emit_probs_by_vocab = torch.zeros(
+                bsz,
+                seq_len,
+                self.vocab_size,
+                device=input_ids.device,
+                dtype=torch.float32,
+            )
         generated_current_ids = input_ids[:, positions]
         for value_index in range(value_span):
             key_pos = positions - value_offset - value_index
@@ -347,14 +359,15 @@ class CausalCopyHead(nn.Module):
             key_ids = input_ids[:, clipped_key_pos]
             key_stop_count = source_stop_prefix[:, clipped_key_pos]
             same_value_segment = source_stop_prefix[:, None, :] == key_stop_count[:, None, :]
+            same_value_or_stop_segment = source_stop_prefix_before[:, None, :] == key_stop_count[:, None, :]
             matches = request_ids[:, None, :, None] == key_ids[:, None, None, :]
-            valid = (
+            segment_valid = (
                 request_valid[:, :, :, None]
                 & key_valid[None, None, None, :]
                 & source_region[:, :, None, :]
-                & source_not_stopped[:, None, None, :]
                 & same_value_segment[:, :, None, :]
             )
+            valid = segment_valid & source_not_stopped[:, None, None, :]
             request_match = (matches & valid).to(dtype=first_follow.dtype).sum(dim=2)
             if value_index == 0:
                 first_follow = first_follow + request_match
@@ -383,9 +396,27 @@ class CausalCopyHead(nn.Module):
                         & (target_prefix_ids[:, :, None] == source_prefix_ids[:, None, :])
                     )
                 )
-            continuation_follow = continuation_follow + request_match * (
-                prefix_matches & source_prev_valid[None, None, :] & continuation_target_valid[:, :, None]
-            ).to(dtype=continuation_follow.dtype)
+            prefix_valid = prefix_matches & source_prev_valid[None, None, :] & continuation_target_valid[:, :, None]
+            continuation_follow = continuation_follow + request_match * prefix_valid.to(
+                dtype=continuation_follow.dtype
+            )
+            if stop_emit_probs_by_vocab is not None:
+                stop_valid = (
+                    request_valid[:, :, :, None]
+                    & key_valid[None, None, None, :]
+                    & source_region[:, :, None, :]
+                    & source_stop_mask[:, None, None, :]
+                    & same_value_or_stop_segment[:, :, None, :]
+                )
+                stop_request_match = (matches & stop_valid).to(dtype=first_follow.dtype).sum(dim=2)
+                stop_active = (stop_request_match * prefix_valid.to(dtype=first_follow.dtype)).sum(
+                    dim=-1,
+                    keepdim=False,
+                ) > 0
+                stop_emit_probs_by_vocab[:, :, stop_emit_token_id] = torch.maximum(
+                    stop_emit_probs_by_vocab[:, :, stop_emit_token_id],
+                    stop_active.to(dtype=stop_emit_probs_by_vocab.dtype),
+                )
 
         has_continuation = continuation_follow.sum(dim=-1, keepdim=True) > 0
         first_follow = torch.where(has_continuation, torch.zeros_like(first_follow), first_follow)
@@ -401,7 +432,7 @@ class CausalCopyHead(nn.Module):
             continuation_follow / continuation_denom.clamp_min(1e-12),
             torch.zeros_like(continuation_follow),
         )
-        return first_probs, continuation_probs
+        return first_probs, continuation_probs, stop_emit_probs_by_vocab
 
     def forward(
         self,
@@ -466,7 +497,7 @@ class CausalCopyHead(nn.Module):
             if not (self.training and bool(self.config.request_key_follow_eval_only)):
                 request_key_follow_probs_by_pos = self._request_key_follow_probs_by_pos(input_ids, source_mask)
             if request_key_follow_probs_by_pos is not None:
-                first_follow_by_pos, continuation_follow_by_pos = request_key_follow_probs_by_pos
+                first_follow_by_pos, continuation_follow_by_pos, stop_emit_by_vocab = request_key_follow_probs_by_pos
                 for route_probs_by_pos, route_strength in [
                     (first_follow_by_pos, float(self.config.request_key_follow_strength)),
                     (
@@ -483,4 +514,9 @@ class CausalCopyHead(nn.Module):
                     route_probs_by_vocab.scatter_add_(dim=-1, index=index, src=route_probs_by_pos)
                     route_logits = torch.log(route_probs_by_vocab.clamp_min(1e-12)) + route_strength
                     copy_logits = torch.logaddexp(copy_logits, route_logits)
+                if stop_emit_by_vocab is not None and self.config.request_key_follow_stop_strength:
+                    stop_logits = torch.log(stop_emit_by_vocab.clamp_min(1e-12)) + float(
+                        self.config.request_key_follow_stop_strength
+                    )
+                    copy_logits = torch.logaddexp(copy_logits, stop_logits)
             return torch.logaddexp(lm_logits, copy_logits)

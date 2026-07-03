@@ -47,6 +47,8 @@ copy_head:
   request_key_follow_query_ignore_token_ids: [23, 269, 272, 328]
   request_key_follow_prompt_suffix_tokens: 1
   request_key_follow_prefix_tokens: 12
+  request_key_follow_stop_strength: 32.0
+  request_key_follow_stop_emit_token_id: 2
 compression:
   enabled: false
   block_size: 8

@@ -67,4 +67,23 @@ def estimate_flops_per_token(config: ModelConfig) -> int:
             span = max(1, int(config.copy_head.key_follow_value_span))
             boundary_scan = seq if config.copy_head.key_follow_source_until_token_id >= 0 else 0
             copy += seq * recent * (span + boundary_scan + 1)
+        request_strength = (
+            config.copy_head.request_key_follow_strength
+            or config.copy_head.request_key_follow_continuation_strength
+            or config.copy_head.request_key_follow_stop_strength
+        )
+        if request_strength:
+            recent = max(0, int(config.copy_head.request_key_follow_recent_tokens))
+            span = max(1, int(config.copy_head.request_key_follow_value_span))
+            prefix = max(1, int(config.copy_head.request_key_follow_prefix_tokens))
+            boundary_scans = 0
+            for token_id in [
+                config.copy_head.request_key_follow_after_token_id,
+                config.copy_head.request_key_follow_before_token_id,
+                config.copy_head.request_key_follow_source_after_token_id,
+                config.copy_head.request_key_follow_query_after_token_id,
+            ]:
+                boundary_scans += seq if token_id >= 0 else 0
+            boundary_scans += seq * len(config.copy_head.request_key_follow_query_before_token_ids)
+            copy += seq * (recent + span * (prefix + 4) + boundary_scans + 1)
     return int(body + head + mtp + copy)

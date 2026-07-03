@@ -431,3 +431,5 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["copy_head"]["request_key_follow_query_ignore_token_ids"] == [23, 269, 272, 328]
         assert payload["copy_head"]["request_key_follow_prompt_suffix_tokens"] == 1
         assert payload["copy_head"]["request_key_follow_prefix_tokens"] == 12
+        assert payload["copy_head"]["request_key_follow_stop_strength"] == 32.0
+        assert payload["copy_head"]["request_key_follow_stop_emit_token_id"] == 2
