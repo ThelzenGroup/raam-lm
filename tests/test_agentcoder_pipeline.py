@@ -7,7 +7,14 @@ import subprocess
 import sys
 
 from scripts.make_agentcoder_curated_sft import build_eval_cases, build_train_records
-from raam_lm.agent_data import pack_binary_shards, pack_documents, render_agent_record, write_int32_tokens
+from raam_lm.agent_data import (
+    encode_agent_record_with_loss_mask,
+    pack_binary_shards,
+    pack_documents,
+    read_int32_tokens,
+    render_agent_record,
+    write_int32_tokens,
+)
 from raam_lm.tokenization import AgentCoderTokenizer, train_agent_tokenizer
 
 
@@ -105,6 +112,50 @@ def test_dataset_packing_can_mirror_validation_for_overfit(tmp_path):
     assert manifest["mirror_val"] is True
     assert manifest["train_docs"] == manifest["val_docs"] == 2
     assert manifest["train_tokens"] == manifest["val_tokens"]
+
+
+def test_assistant_loss_mask_scores_only_agent_outputs(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    write_tiny_agentic(data)
+    tokenizer = train_agent_tokenizer([data], vocab_size=384)
+    record = {
+        "system": "Rules.",
+        "repo_context": "file: calc.py",
+        "messages": [{"role": "user", "content": "Fix add."}],
+        "trace": [{"type": "assistant", "content": "symbol=add\nfile=calc.py"}],
+    }
+
+    ids, mask = encode_agent_record_with_loss_mask(record, tokenizer, add_bos=True, add_eos=True)
+    decoded_scored = tokenizer.decode([token for token, keep in zip(ids, mask) if keep])
+
+    assert len(ids) == len(mask)
+    assert sum(mask) > 0
+    assert "symbol" in decoded_scored
+    assert "calc.py" in decoded_scored
+    assert "Fix add" not in decoded_scored
+    assert "file: calc.py" not in decoded_scored
+
+
+def test_dataset_packing_writes_assistant_loss_masks(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    write_tiny_agentic(data)
+    tokenizer = train_agent_tokenizer([data], vocab_size=384)
+    manifest = pack_documents(
+        [data],
+        tokenizer,
+        tmp_path / "packed_masked",
+        seq_len=32,
+        val_fraction=0.5,
+        assistant_loss_only=True,
+    )
+
+    train_tokens = read_int32_tokens(tmp_path / "packed_masked" / "train.bin")
+    train_mask = read_int32_tokens(tmp_path / "packed_masked" / "train_loss_mask.bin")
+
+    assert manifest["assistant_loss_only"] is True
+    assert manifest["train_loss_tokens"] == int(train_mask.sum().item())
+    assert 0 < manifest["train_loss_tokens"] < manifest["train_tokens"]
+    assert train_tokens.numel() == train_mask.numel()
 
 
 def test_dataset_packing_skips_manifest_metadata(tmp_path):

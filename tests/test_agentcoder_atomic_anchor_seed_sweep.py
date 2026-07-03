@@ -127,6 +127,7 @@ def test_atomic_copy_gate_forwards_seed_to_packing_and_training():
         val_fraction=0.2,
         seed=41,
         mirror_val=True,
+        assistant_loss_only=True,
         steps=2400,
         eval_batches=None,
     )
@@ -139,5 +140,6 @@ def test_atomic_copy_gate_forwards_seed_to_packing_and_training():
     train_cmd = build_train_command(args, Path("runs/gate/packed"), Path("runs/gate/tokenizer.json"), Path("runs/gate/train"))
 
     assert pack_cmd[pack_cmd.index("--seed") + 1] == "41"
+    assert "--assistant-loss-only" in pack_cmd
     assert train_cmd[train_cmd.index("--seed") + 1] == "41"
     assert train_cmd[train_cmd.index("--steps") + 1] == "2400"

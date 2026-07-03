@@ -72,15 +72,27 @@ def load_resume_checkpoint(path: str, model, optimizer, device) -> tuple[int, bo
 def evaluate(model, dataset, config, device, dtype, global_step: int) -> dict[str, float]:
     model.eval()
     losses: list[float] = []
+    mask_fractions: list[float] = []
     batches = max(1, config.eval.eval_batches)
     with torch.no_grad():
         for _ in range(batches):
-            batch = dataset.next_batch(config.train.batch_size, config.train.seq_len, device)
+            batch, loss_mask = dataset.next_batch_with_loss_mask(config.train.batch_size, config.train.seq_len, device)
             with maybe_autocast(device, dtype):
-                out = model(batch, labels=batch, global_step=global_step)
+                out = model(batch, labels=batch, global_step=global_step, loss_mask=loss_mask)
             losses.append(_float(out["next_token_loss"]))
+            if loss_mask is not None:
+                mask_fractions.append(float(loss_mask.mean().detach().cpu()))
     model.train()
-    return {"val_next_token_loss": sum(losses) / len(losses)}
+    metrics = {"val_next_token_loss": sum(losses) / len(losses)}
+    if mask_fractions:
+        metrics["val_loss_mask_fraction"] = sum(mask_fractions) / len(mask_fractions)
+    return metrics
+
+
+def inferred_loss_mask_path(token_path: str) -> Path | None:
+    path = Path(token_path)
+    candidate = path.with_name(f"{path.stem}_loss_mask{path.suffix}")
+    return candidate if candidate.exists() else None
 
 
 def main() -> None:
@@ -151,8 +163,10 @@ def main() -> None:
     if args.resume:
         start_step, resume_optimizer_loaded = load_resume_checkpoint(args.resume, model, optimizer, device)
 
-    train_data = PackedTokenDataset(args.train_bin, seed=config.train.seed)
-    val_data = PackedTokenDataset(args.val_bin, seed=config.train.seed + 1)
+    train_loss_mask_path = inferred_loss_mask_path(args.train_bin)
+    val_loss_mask_path = inferred_loss_mask_path(args.val_bin)
+    train_data = PackedTokenDataset(args.train_bin, seed=config.train.seed, loss_mask_path=train_loss_mask_path)
+    val_data = PackedTokenDataset(args.val_bin, seed=config.train.seed + 1, loss_mask_path=val_loss_mask_path)
     est_flops = estimate_flops_per_token(config)
     manifest = {
         "model_name": config.model_name,
@@ -161,6 +175,8 @@ def main() -> None:
         "tokenizer_path": args.tokenizer,
         "train_bin": args.train_bin,
         "val_bin": args.val_bin,
+        "train_loss_mask_bin": str(train_loss_mask_path) if train_loss_mask_path else None,
+        "val_loss_mask_bin": str(val_loss_mask_path) if val_loss_mask_path else None,
         "device": str(device),
         "dtype": str(dtype).replace("torch.", ""),
         "param_count_total": count_parameters(model),
@@ -191,15 +207,21 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 start = time.perf_counter()
                 last_out = None
+                last_loss_mask = None
                 for _ in range(grad_accum):
-                    batch = train_data.next_batch(config.train.batch_size, config.train.seq_len, device)
+                    batch, loss_mask = train_data.next_batch_with_loss_mask(
+                        config.train.batch_size,
+                        config.train.seq_len,
+                        device,
+                    )
                     with maybe_autocast(device, dtype):
-                        out = model(batch, labels=batch, global_step=step)
+                        out = model(batch, labels=batch, global_step=step, loss_mask=loss_mask)
                         loss = out["loss"] / grad_accum
                     if not torch.isfinite(loss):
                         raise RuntimeError(f"non-finite loss at step {step}: {loss.detach().cpu().item()}")
                     loss.backward()
                     last_out = out
+                    last_loss_mask = loss_mask
                 pre_clip_norm = grad_norm(model.parameters())
                 if config.train.grad_clip:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.grad_clip)
@@ -231,6 +253,8 @@ def main() -> None:
                     "compression_ratio": aux.get("compression_ratio", 1.0),
                     "mixer_backend": aux.get("mixer_backend", "unknown"),
                 }
+                if last_loss_mask is not None:
+                    metrics["loss_mask_fraction"] = float(last_loss_mask.mean().detach().cpu())
                 if step % max(config.train.eval_every, 1) == 0 or step == config.train.steps - 1:
                     metrics.update(evaluate(model, val_data, config, device, dtype, step))
                 log_fh.write(json.dumps(metrics, sort_keys=True) + "\n")

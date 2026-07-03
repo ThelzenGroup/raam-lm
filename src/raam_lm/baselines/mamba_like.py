@@ -48,6 +48,7 @@ class PureMambaLikeForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         labels: torch.Tensor | None = None,
         global_step: int = 0,
+        loss_mask: torch.Tensor | None = None,
     ) -> dict[str, object]:
         x = self.tok_embeddings(input_ids)
         for block in self.blocks:
@@ -62,6 +63,7 @@ class PureMambaLikeForCausalLM(nn.Module):
             self.mtp_heads,
             self.config.mtp,
             global_step,
+            loss_mask=loss_mask,
         )
         return {
             **output,
@@ -75,4 +77,3 @@ class PureMambaLikeForCausalLM(nn.Module):
                 "anchor_token_fraction": 0.0,
             },
         }
-

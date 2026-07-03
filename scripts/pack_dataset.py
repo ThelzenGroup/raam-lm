@@ -25,6 +25,11 @@ def main() -> None:
         action="store_true",
         help="Use the same tokens for train and validation; intended for tiny overfit sanity checks.",
     )
+    parser.add_argument(
+        "--assistant-loss-only",
+        action="store_true",
+        help="For structured JSONL records, train only on assistant-owned output tokens.",
+    )
     args = parser.parse_args()
     if all(str(path).endswith(".bin") for path in args.inputs):
         manifest = pack_binary_shards(
@@ -34,6 +39,7 @@ def main() -> None:
             val_fraction=args.val_fraction,
             seed=args.seed,
             mirror_val=args.mirror_val,
+            assistant_loss_only=args.assistant_loss_only,
         )
     else:
         if args.tokenizer is None:

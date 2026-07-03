@@ -42,6 +42,7 @@ class DenseTransformerForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         labels: torch.Tensor | None = None,
         global_step: int = 0,
+        loss_mask: torch.Tensor | None = None,
     ) -> dict[str, object]:
         x = self.tok_embeddings(input_ids)
         origins = causal_positions(input_ids.shape[0], input_ids.shape[1], input_ids.device)
@@ -57,6 +58,7 @@ class DenseTransformerForCausalLM(nn.Module):
             self.mtp_heads,
             self.config.mtp,
             global_step,
+            loss_mask=loss_mask,
         )
         return {
             **output,
@@ -70,4 +72,3 @@ class DenseTransformerForCausalLM(nn.Module):
                 "anchor_token_fraction": 0.0,
             },
         }
-

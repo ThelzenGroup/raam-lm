@@ -40,6 +40,8 @@ def build_pack_command(args: argparse.Namespace, train_jsonl: Path, tokenizer: P
     ]
     if args.mirror_val:
         cmd.append("--mirror-val")
+    if getattr(args, "assistant_loss_only", False):
+        cmd.append("--assistant-loss-only")
     return cmd
 
 
@@ -88,6 +90,12 @@ def main() -> None:
     parser.add_argument("--min-pass-rate", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--mirror-val", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--assistant-loss-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Mask SFT loss to assistant-owned output tokens while still packing full prompts.",
+    )
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-fail", action="store_true")
     args = parser.parse_args()
@@ -203,6 +211,9 @@ def main() -> None:
         "train_docs": packed_manifest.get("train_docs"),
         "val_docs": packed_manifest.get("val_docs"),
         "mirror_val": packed_manifest.get("mirror_val", False),
+        "assistant_loss_only": packed_manifest.get("assistant_loss_only", False),
+        "train_loss_tokens": packed_manifest.get("train_loss_tokens"),
+        "val_loss_tokens": packed_manifest.get("val_loss_tokens"),
         "param_count_non_embedding": train_manifest["param_count_non_embedding"],
         "estimated_flops_per_token": train_manifest["estimated_flops_per_token"],
     }

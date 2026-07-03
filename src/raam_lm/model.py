@@ -35,6 +35,7 @@ def _loss_output(
     global_step: int,
     recon_loss: torch.Tensor | None = None,
     recon_weight: float = 0.0,
+    loss_mask: torch.Tensor | None = None,
     aux: dict[str, float | str | list[int]] | None = None,
 ) -> dict[str, object]:
     losses = compute_lm_losses(
@@ -47,6 +48,7 @@ def _loss_output(
         global_step=global_step,
         recon_loss=recon_loss,
         recon_weight=recon_weight,
+        loss_mask=loss_mask,
     )
     output: dict[str, object] = {
         **losses,
@@ -149,6 +151,7 @@ class RAAMForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         labels: torch.Tensor | None = None,
         global_step: int = 0,
+        loss_mask: torch.Tensor | None = None,
     ) -> dict[str, object]:
         x = self.tok_embeddings(input_ids)
         for block in self.lower_blocks:
@@ -201,5 +204,6 @@ class RAAMForCausalLM(nn.Module):
             global_step,
             recon_loss=recon_loss,
             recon_weight=recon_weight,
+            loss_mask=loss_mask,
             aux=aux,
         )

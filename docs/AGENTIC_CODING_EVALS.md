@@ -157,8 +157,12 @@ python scripts/run_agentcoder_atomic_copy_gate.py \
 The default `--eval-mode mirror` evaluates slots that appeared in training, and
 the runner defaults to `--mirror-val`. Passing this does not prove useful coding
 ability; failing it means the pipeline cannot yet learn the most basic exact
-copy control. After mirror passes, use `--eval-mode ladder --no-mirror-val` to
-add held-out slots back in.
+copy control. The atomic runner also defaults to assistant-only SFT loss masking:
+`pack_dataset.py` writes `train_loss_mask.bin` and `val_loss_mask.bin`, and
+`train.py` uses those masks automatically. This keeps the training objective on
+the copied `symbol=` / `file=` answer tokens rather than the easy prompt and
+repo-context template. After mirror passes, use `--eval-mode ladder
+--no-mirror-val` to add held-out slots back in.
 
 When one-record mirror overfit passes but larger mirror runs fail, locate the
 binding break point with the cardinality sweep:
