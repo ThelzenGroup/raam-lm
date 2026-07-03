@@ -145,6 +145,7 @@ class CausalCopyHead(nn.Module):
         separator_token_id = int(self.config.key_follow_separator_token_id)
         recent_after_token_id = int(self.config.key_follow_recent_after_token_id)
         align_value_offset = bool(self.config.key_follow_align_value_offset)
+        match_value_prefix = bool(self.config.key_follow_match_value_prefix)
         positions = torch.arange(seq_len, device=input_ids.device)
         follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
         source_region = self._source_region_mask(
@@ -189,6 +190,14 @@ class CausalCopyHead(nn.Module):
                 key_ids = input_ids[:, clipped_key_pos]
                 pair_valid = recent_valid[:, None] & separator_valid[:, None] & key_valid[None, :]
                 matches = recent_ids[:, :, None] == key_ids[:, None, :]
+                if match_value_prefix and align_value_offset and recent_offset > 1:
+                    source_prev_pos = (positions - 1).clamp_min(0)
+                    source_prev_valid = positions > 0
+                    source_prev_ids = input_ids[:, source_prev_pos]
+                    generated_prev_ids = input_ids[:, positions]
+                    prefix_matches = generated_prev_ids[:, :, None] == source_prev_ids[:, None, :]
+                    pair_valid = pair_valid & source_prev_valid[None, :]
+                    matches = matches & prefix_matches
                 valid = (
                     pair_valid.unsqueeze(0)
                     & separator_matches[:, :, None]

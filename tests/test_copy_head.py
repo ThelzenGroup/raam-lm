@@ -120,6 +120,33 @@ def test_causal_copy_head_key_follow_aligns_multitoken_value_offset():
     assert out[0, 10, 203] > out[0, 10, 201]
 
 
+def test_causal_copy_head_key_follow_matches_generated_value_prefix():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_strength=10.0,
+        key_follow_recent_tokens=4,
+        key_follow_value_offset=3,
+        key_follow_value_span=1,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        key_follow_align_value_offset=True,
+        key_follow_match_value_prefix=True,
+        key_follow_separator_token_id=8,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    hidden = torch.zeros(1, 15, 4)
+    input_ids = torch.tensor([[31, 9, 9, 201, 202, 31, 9, 9, 203, 204, 5, 31, 8, 203, 204]])
+    lm_logits = torch.zeros(1, 15, 256)
+
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 13, 203] > out[0, 13, 201]
+    assert out[0, 14, 204] > out[0, 14, 202]
+
+
 def test_causal_copy_head_key_follow_requires_recent_key_after_assistant_boundary():
     config = CopyHeadConfig(
         enabled=True,

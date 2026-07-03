@@ -153,5 +153,6 @@ def test_keyvalue_key_follow_configs_enable_same_route():
         assert payload["copy_head"]["key_follow_min_source_gap"] == 8
         assert payload["copy_head"]["key_follow_source_until_token_id"] == 5
         assert payload["copy_head"]["key_follow_align_value_offset"] is True
+        assert payload["copy_head"]["key_follow_match_value_prefix"] is True
         assert payload["copy_head"]["key_follow_separator_token_id"] == 275
         assert payload["copy_head"]["key_follow_recent_after_token_id"] == 6
