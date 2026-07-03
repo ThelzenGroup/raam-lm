@@ -79,6 +79,7 @@ class CopyHeadConfig:
     request_key_follow_after_token_id: int = -1
     request_key_follow_before_token_id: int = -1
     request_key_follow_value_span: int = 1
+    request_key_follow_eval_only: bool = False
 
 
 @dataclass

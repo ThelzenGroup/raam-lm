@@ -390,7 +390,9 @@ class CausalCopyHead(nn.Module):
                     route_probs_by_vocab.scatter_add_(dim=-1, index=index, src=route_probs_by_pos)
                     route_logits = torch.log(route_probs_by_vocab.clamp_min(1e-12)) + route_strength
                     copy_logits = torch.logaddexp(copy_logits, route_logits)
-            request_key_follow_probs_by_pos = self._request_key_follow_probs_by_pos(input_ids, source_mask)
+            request_key_follow_probs_by_pos = None
+            if not (self.training and bool(self.config.request_key_follow_eval_only)):
+                request_key_follow_probs_by_pos = self._request_key_follow_probs_by_pos(input_ids, source_mask)
             if request_key_follow_probs_by_pos is not None:
                 first_follow_by_pos, continuation_follow_by_pos = request_key_follow_probs_by_pos
                 for route_probs_by_pos, route_strength in [

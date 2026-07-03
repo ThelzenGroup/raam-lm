@@ -34,12 +34,13 @@ copy_head:
   key_follow_separator_token_id: 275
   key_follow_recent_after_token_id: 6
   key_follow_stop_token_ids: [23]
-  request_key_follow_strength: 12.0
-  request_key_follow_continuation_strength: 12.0
+  request_key_follow_strength: 4.0
+  request_key_follow_continuation_strength: 6.0
   request_key_follow_recent_tokens: 64
   request_key_follow_after_token_id: 5
   request_key_follow_before_token_id: 6
   request_key_follow_value_span: 32
+  request_key_follow_eval_only: true
 compression:
   enabled: false
   block_size: 8

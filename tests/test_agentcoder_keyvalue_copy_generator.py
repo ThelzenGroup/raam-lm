@@ -417,9 +417,10 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["model_name"] == model_name
         assert payload["copy_head"]["enabled"] is True
         assert payload["copy_head"]["key_follow_strength"] > 0
-        assert payload["copy_head"]["request_key_follow_strength"] > 0
-        assert payload["copy_head"]["request_key_follow_continuation_strength"] > 0
+        assert payload["copy_head"]["request_key_follow_strength"] == 4.0
+        assert payload["copy_head"]["request_key_follow_continuation_strength"] == 6.0
         assert payload["copy_head"]["request_key_follow_recent_tokens"] == 64
         assert payload["copy_head"]["request_key_follow_after_token_id"] == 5
         assert payload["copy_head"]["request_key_follow_before_token_id"] == 6
         assert payload["copy_head"]["request_key_follow_value_span"] == 32
+        assert payload["copy_head"]["request_key_follow_eval_only"] is True
