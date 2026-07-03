@@ -129,6 +129,37 @@ Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
 spending on a larger supervised or continuation run.
 
+## Atomic Copy Gate
+
+If the copy-only ladder still fails, run the atomic copy gate before changing
+architecture. This is the smallest control: one slot family, two fields
+(`symbol` and `file`), no distractors, short `key=value` output, and mirrored
+packed validation by default.
+
+```bash
+python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_atomic_copy_gate.yaml \
+  --output-dir runs/agentcoder_atomic_copy_gate_raam \
+  --device auto \
+  --clean
+```
+
+Run the tiny Transformer baseline with:
+
+```bash
+python scripts/run_agentcoder_atomic_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_atomic_copy_gate.yaml \
+  --output-dir runs/agentcoder_atomic_copy_gate_transformer \
+  --device auto \
+  --clean
+```
+
+The default `--eval-mode mirror` evaluates slots that appeared in training, and
+the runner defaults to `--mirror-val`. Passing this does not prove useful coding
+ability; failing it means the pipeline cannot yet learn the most basic exact
+copy control. After mirror passes, use `--eval-mode ladder --no-mirror-val` to
+add held-out slots back in.
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another
