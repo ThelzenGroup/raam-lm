@@ -2161,6 +2161,72 @@ Local artifact pulls:
 
 Checkpoint weights were not pulled.
 
+Prefix-matched span-copy follow-up:
+
+Added `key_follow_match_value_prefix` so continuation tokens must follow the
+same already-generated value prefix in the source span. Direct route inspection
+on `keyvalue_heldout_000` showed the deterministic route itself points to the
+right bytes:
+
+- `adapter=` -> `c`
+- `adapter=c` -> `a`
+- `adapter=ca` -> `s`
+- `adapter=case_` -> `a`
+
+However, combined-logit inspection on the RAAM checkpoint showed the learned
+model still strongly prefers newline after the first byte:
+
+| Partial | Correct Route Token | Correct Logit at Strength 10 | Strong Competing Token | Competing Logit |
+| --- | --- | ---: | --- | ---: |
+| `adapter=` | `c` | 10.0 | seen whole-token adapter | 5.433 |
+| `adapter=c` | `a` | 10.014 | newline | 25.571 |
+| `adapter=ca` | `s` | 10.0 | `module` | 15.599 |
+
+Eval-only prefix-match results on the same checkpoints:
+
+- remote focused tests: `11 passed, 9 deselected`
+- RAAM prefix-match eval-only: `29 / 64`
+- Transformer prefix-match eval-only: `32 / 64`
+
+RAAM key-follow strength sweep on the same checkpoint:
+
+| Key-follow Strength | Exact Pass |
+| ---: | ---: |
+| 10 | 29 / 64 |
+| 14 | 28 / 64 |
+| 18 | 3 / 64 |
+| 24 | 0 / 64 |
+| 32 | 0 / 64 |
+| 48 | 0 / 64 |
+
+Higher strength over-copied source fragments and collapsed generation rather
+than solving held-out byte-copying.
+
+Split first-token vs continuation-copy diagnostic:
+
+- kept first-token key-follow strength at `10`
+- tried continuation strength `30`
+- blocked newline source tokens from the deterministic copy route
+
+Remote eval-only results:
+
+- focused tests: `11 passed, 9 deselected`
+- RAAM split-continuation eval-only: `2 / 64`
+- Transformer split-continuation eval-only: `0 / 64`
+
+This was also a negative result: the high continuation route copied source
+context fragments such as `module: ...` and repeated source rows. The key-value
+configs were restored to conservative continuation strength `0.0`, which falls
+back to the base key-follow strength.
+
+Additional local artifact pulls:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_keyvalue_prefix_match_eval_only_20260703T102150Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_keyvalue_prefix_strength_sweep_20260703T102303Z`
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_keyvalue_split_continuation_eval_only_20260703T103147Z`
+
+Checkpoint weights were not pulled.
+
 Interpretation: key-follow cleared the atomic in-vocabulary `symbol`/`file`
 mirror gate, but the broader key-value ladder falsifies the idea that it is
 already enough for agentic coding. The next useful step is an OOV-aware copy
