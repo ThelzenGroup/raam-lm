@@ -143,6 +143,7 @@ class CausalCopyHead(nn.Module):
         min_source_gap = max(0, int(self.config.key_follow_min_source_gap))
         source_until_token_id = int(self.config.key_follow_source_until_token_id)
         separator_token_id = int(self.config.key_follow_separator_token_id)
+        recent_after_token_id = int(self.config.key_follow_recent_after_token_id)
         align_value_offset = bool(self.config.key_follow_align_value_offset)
         positions = torch.arange(seq_len, device=input_ids.device)
         follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
@@ -152,12 +153,22 @@ class CausalCopyHead(nn.Module):
             min_source_gap=min_source_gap,
             source_until_token_id=source_until_token_id,
         )
+        if recent_after_token_id >= 0:
+            recent_boundary_positions = torch.where(
+                input_ids == recent_after_token_id,
+                positions.unsqueeze(0),
+                torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+            )
+            last_recent_boundary = torch.cummax(recent_boundary_positions, dim=1).values
+        else:
+            last_recent_boundary = torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype)
 
         for recent_offset in range(1, recent_tokens + 1):
             recent_weight = float(recent_tokens - recent_offset + 1)
             recent_valid = positions >= recent_offset
             recent_pos = (positions - recent_offset).clamp_min(0)
             recent_ids = input_ids[:, recent_pos]
+            recent_after_boundary = recent_pos.unsqueeze(0) > last_recent_boundary
             if separator_token_id >= 0:
                 separator_pos = (positions - recent_offset + 1).clamp_min(0)
                 separator_ids = input_ids[:, separator_pos]
@@ -178,7 +189,12 @@ class CausalCopyHead(nn.Module):
                 key_ids = input_ids[:, clipped_key_pos]
                 pair_valid = recent_valid[:, None] & separator_valid[:, None] & key_valid[None, :]
                 matches = recent_ids[:, :, None] == key_ids[:, None, :]
-                valid = pair_valid.unsqueeze(0) & separator_matches[:, :, None] & source_region
+                valid = (
+                    pair_valid.unsqueeze(0)
+                    & separator_matches[:, :, None]
+                    & recent_after_boundary[:, :, None]
+                    & source_region
+                )
                 follow = follow + recent_weight * (matches & valid).to(dtype=follow.dtype)
 
         denom = follow.sum(dim=-1, keepdim=True)

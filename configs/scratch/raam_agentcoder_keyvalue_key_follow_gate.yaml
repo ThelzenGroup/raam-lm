@@ -30,6 +30,7 @@ copy_head:
   key_follow_source_until_token_id: 5
   key_follow_align_value_offset: true
   key_follow_separator_token_id: 275
+  key_follow_recent_after_token_id: 6
 compression:
   enabled: true
   block_size: 8

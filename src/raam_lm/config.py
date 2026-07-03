@@ -69,6 +69,7 @@ class CopyHeadConfig:
     key_follow_source_until_token_id: int = -1
     key_follow_align_value_offset: bool = False
     key_follow_separator_token_id: int = -1
+    key_follow_recent_after_token_id: int = -1
 
 
 @dataclass
