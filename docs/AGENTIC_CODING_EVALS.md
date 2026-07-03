@@ -217,6 +217,19 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
   --clean
 ```
 
+If the all-anchor ceiling passes, test whether a cheaper deterministic partial
+route is enough by using uniform anchors:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_uniform_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_uniform_anchor_attention \
+  --device auto \
+  --clean
+```
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another

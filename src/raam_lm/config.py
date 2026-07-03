@@ -14,6 +14,7 @@ class CompressionConfig:
     enabled: bool = True
     block_size: int = 8
     anchors_per_block: int = 2
+    anchor_selection: str = "learned_topk"
     pooled_chunks_per_block: int = 1
     delayed_chunk_context: bool = True
     anchor_score_hidden: int = 64

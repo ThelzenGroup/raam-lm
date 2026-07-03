@@ -103,10 +103,24 @@ class DynamicHourglassCompressor(nn.Module):
         anchor_scores = self.anchor_scorer(blocks).squeeze(-1)
         anchor_scores = anchor_scores.masked_fill(~valid, dtype_mask_min(anchor_scores))
         anchors = int(cfg.anchors_per_block)
+        if anchors > block_size:
+            raise ValueError("anchors_per_block must be <= block_size")
         if anchors > 0:
-            _, local_idx = torch.topk(anchor_scores, k=anchors, dim=-1)
-            local_idx = torch.sort(local_idx, dim=-1).values
             valid_counts = valid.sum(dim=-1, keepdim=True).clamp_min(1)
+            if cfg.anchor_selection == "learned_topk":
+                _, local_idx = torch.topk(anchor_scores, k=anchors, dim=-1)
+            elif cfg.anchor_selection == "uniform":
+                base_idx = torch.linspace(
+                    0,
+                    block_size - 1,
+                    steps=anchors,
+                    device=x.device,
+                    dtype=torch.float32,
+                ).round().to(torch.long)
+                local_idx = base_idx.view(1, 1, anchors).expand(bsz, n_blocks, anchors)
+            else:
+                raise ValueError("anchor_selection must be 'learned_topk' or 'uniform'")
+            local_idx = torch.sort(local_idx, dim=-1).values
             local_idx = torch.minimum(local_idx, valid_counts - 1)
             anchor_valid_selected = torch.gather(valid, 2, local_idx)
             anchor_tokens = torch.gather(
@@ -168,6 +182,7 @@ class DynamicHourglassCompressor(nn.Module):
             "entries_per_block": entries,
             "pooled_chunks_per_block": pooled,
             "anchors_per_block": anchors,
+            "anchor_selection": cfg.anchor_selection,
             "anchor_indices": anchor_indices,
             "anchor_local_indices": local_idx,
             "token_to_block": token_to_block,

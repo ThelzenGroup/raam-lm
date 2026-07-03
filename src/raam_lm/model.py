@@ -188,6 +188,7 @@ class RAAMForCausalLM(nn.Module):
             "compression_ratio": float(ratio),
             "mean_anchor_score": float(mean_anchor_score.detach().cpu()),
             "anchor_token_fraction": float(anchor_fraction),
+            "anchor_selection": self.config.compression.anchor_selection,
             "attention_island_layers": list(self.config.attention_island_layers),
         }
         return _loss_output(
@@ -202,4 +203,3 @@ class RAAMForCausalLM(nn.Module):
             recon_weight=recon_weight,
             aux=aux,
         )
-
