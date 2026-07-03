@@ -177,6 +177,19 @@ the selected pass-rate threshold for each model. The sweep intentionally uses
 `--no-fail` for each sub-run unless `--fail-on-gate` is passed, because a low
 pass rate is the measurement.
 
+If full RAAM breaks before the Transformer baseline, isolate dynamic hourglass
+compression with:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_no_compression_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_no_compression \
+  --device auto \
+  --clean
+```
+
 ## Copy-Only Slot Binding Gate
 
 If exact slot-copy failures appear, run the copy-only gate before another

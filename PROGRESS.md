@@ -1790,6 +1790,95 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43634442 exited
 ```
 
+## AgentCoder Atomic Cardinality Sweep
+
+Added a reusable cardinality sweep wrapper for the atomic copy gate:
+
+- `scripts/run_agentcoder_atomic_cardinality_sweep.py`
+- `tests/test_agentcoder_atomic_cardinality_sweep.py`
+
+Updated `docs/AGENTIC_CODING_EVALS.md` with the sweep command and its
+diagnostic purpose. The sweep runs the no-decoy atomic copy gate across binding
+counts and writes one aggregate `summary.json`.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/run_agentcoder_atomic_cardinality_sweep.py scripts/run_agentcoder_atomic_copy_gate.py scripts/make_agentcoder_atomic_copy_sft.py
+python3 -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- focused local tests passed: `13 passed in 0.06s`
+- `git diff --check` passed
+- local end-to-end smoke could not run under system `python3` because that
+  interpreter has no `torch` installed:
+  `ModuleNotFoundError: No module named 'torch'`
+
+Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --output-dir /root/raam-lm/runs/agentcoder_atomic_cardinality_sweep_20260703T060200Z \
+  --device cuda \
+  --clean
+/venv/main/bin/python -m pytest -q
+```
+
+Remote validation results:
+
+- focused remote tests passed: `13 passed in 0.09s`
+- full remote test suite passed: `50 passed in 32.84s`
+- sweep values: `1,2,4,8,16,32,64`
+- eval policy: mirrored eval with eval cases matched to train-record count
+- `mirror_val: true`
+- default train budget: `1200` steps per sub-run
+
+| Bindings | RAAM Exact Pass | RAAM Val Loss | Transformer Exact Pass | Transformer Val Loss |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 / 1 | 0.00000956 | 1 / 1 | 0.0000128 |
+| 2 | 2 / 2 | 0.018920 | 2 / 2 | 0.019245 |
+| 4 | 2 / 4 | 0.033123 | 4 / 4 | 0.030965 |
+| 8 | 8 / 8 | 0.041650 | 8 / 8 | 0.047006 |
+| 16 | 13 / 16 | 0.052292 | 16 / 16 | 0.049577 |
+| 32 | 2 / 32 | 0.085958 | 32 / 32 | 0.053770 |
+| 64 | 10 / 64 | 0.097215 | 0 / 64 | 0.192129 |
+
+First pass-rate failure below `1.0`:
+
+- RAAM: `4` bindings, `2 / 4` exact
+- Transformer: `64` bindings, `0 / 64` exact
+
+Representative failures:
+
+- RAAM `n=4`, `atomic_mirror_000`: expected `copy_symbol_000` /
+  `copy_file_000.py`, completed `copy_symbol_002` / `copy_file_002.py`.
+- RAAM `n=16`, `atomic_mirror_006`: expected `copy_symbol_006` /
+  `copy_file_006.py`, completed `copy_symbol_010` / `copy_file_010.py`.
+- RAAM `n=32` repeatedly collapsed onto valid but wrong seen slots such as
+  `copy_symbol_010` / `copy_file_010.py`.
+- Transformer `n=64` collapsed to the mixed pair `copy_symbol_015` /
+  `copy_file_003.py` for many prompts.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_atomic_cardinality_sweep_20260703T060200Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: the atomic task now gives us a much clearer floor. Both models
+learn one and two exact bindings. The tiny Transformer baseline preserves exact
+bindings through `32 / 32`, while RAAM's current compressed path fails at `4`,
+recovers at `8`, degrades at `16`, and collapses at `32`. The wrong completions
+are usually valid seen symbol/file pairs, not malformed output. That points to
+an exact binding preservation problem rather than a chat-format problem. Before
+larger chat/coding training, the next useful test is a targeted RAAM ablation
+with dynamic hourglass compression disabled on the same sweep.
+
 ## AgentCoder Programmatic Slot-Copy Gate
 
 Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
