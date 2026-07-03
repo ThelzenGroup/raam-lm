@@ -22,6 +22,55 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
 
+def build_pack_command(args: argparse.Namespace, train_jsonl: Path, tokenizer: Path, packed: Path) -> list[str]:
+    cmd = [
+        sys.executable,
+        "scripts/pack_dataset.py",
+        str(train_jsonl),
+        "--tokenizer",
+        str(tokenizer),
+        "--output-dir",
+        str(packed),
+        "--seq-len",
+        str(args.seq_len),
+        "--val-fraction",
+        str(args.val_fraction),
+        "--seed",
+        str(args.seed),
+    ]
+    if args.mirror_val:
+        cmd.append("--mirror-val")
+    return cmd
+
+
+def build_train_command(args: argparse.Namespace, packed: Path, tokenizer: Path, train_dir: Path) -> list[str]:
+    cmd = [
+        sys.executable,
+        "scripts/train.py",
+        "--config",
+        args.config,
+        "--train-bin",
+        str(packed / "train.bin"),
+        "--val-bin",
+        str(packed / "val.bin"),
+        "--tokenizer",
+        str(tokenizer),
+        "--output-dir",
+        str(train_dir),
+        "--device",
+        args.device,
+        "--seq-len",
+        str(args.seq_len),
+        "--seed",
+        str(args.seed),
+    ]
+    if args.steps is not None:
+        cmd.extend(["--steps", str(args.steps)])
+    if args.eval_batches is not None:
+        cmd.extend(["--eval-batches", str(args.eval_batches)])
+    return cmd
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the atomic no-decoy AgentCoder copy gate.")
     parser.add_argument("--config", default="configs/scratch/raam_agentcoder_atomic_copy_gate.yaml")
@@ -89,46 +138,8 @@ def main() -> None:
             str(args.vocab_size),
         ]
     )
-    pack_cmd = [
-        sys.executable,
-        "scripts/pack_dataset.py",
-        str(train_jsonl),
-        "--tokenizer",
-        str(tokenizer),
-        "--output-dir",
-        str(packed),
-        "--seq-len",
-        str(args.seq_len),
-        "--val-fraction",
-        str(args.val_fraction),
-    ]
-    if args.mirror_val:
-        pack_cmd.append("--mirror-val")
-    run(pack_cmd)
-
-    train_cmd = [
-        sys.executable,
-        "scripts/train.py",
-        "--config",
-        args.config,
-        "--train-bin",
-        str(packed / "train.bin"),
-        "--val-bin",
-        str(packed / "val.bin"),
-        "--tokenizer",
-        str(tokenizer),
-        "--output-dir",
-        str(train_dir),
-        "--device",
-        args.device,
-        "--seq-len",
-        str(args.seq_len),
-    ]
-    if args.steps is not None:
-        train_cmd.extend(["--steps", str(args.steps)])
-    if args.eval_batches is not None:
-        train_cmd.extend(["--eval-batches", str(args.eval_batches)])
-    run(train_cmd)
+    run(build_pack_command(args, train_jsonl, tokenizer, packed))
+    run(build_train_command(args, packed, tokenizer, train_dir))
 
     checkpoint = train_dir / "checkpoints" / "last.pt"
     eval_cmd = [

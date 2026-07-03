@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from argparse import Namespace
+from pathlib import Path
+
 import pytest
 
+from scripts.run_agentcoder_atomic_copy_gate import build_pack_command, build_train_command
 from scripts.run_agentcoder_atomic_anchor_seed_sweep import (
     ConfigSpec,
     build_repeatability_row,
@@ -113,3 +117,27 @@ def test_first_failure_by_config_uses_lowest_seed_below_threshold():
 
     assert failures["hybrid1"]["seed"] == 29
     assert failures["learned"] is None
+
+
+def test_atomic_copy_gate_forwards_seed_to_packing_and_training():
+    args = Namespace(
+        config="configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml",
+        device="cuda",
+        seq_len=96,
+        val_fraction=0.2,
+        seed=41,
+        mirror_val=True,
+        steps=2400,
+        eval_batches=None,
+    )
+    pack_cmd = build_pack_command(
+        args,
+        Path("runs/gate/generated/atomic_train.jsonl"),
+        Path("runs/gate/tokenizer.json"),
+        Path("runs/gate/packed"),
+    )
+    train_cmd = build_train_command(args, Path("runs/gate/packed"), Path("runs/gate/tokenizer.json"), Path("runs/gate/train"))
+
+    assert pack_cmd[pack_cmd.index("--seed") + 1] == "41"
+    assert train_cmd[train_cmd.index("--seed") + 1] == "41"
+    assert train_cmd[train_cmd.index("--steps") + 1] == "2400"
