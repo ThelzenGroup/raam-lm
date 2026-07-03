@@ -2651,6 +2651,115 @@ span-copy/objective change for values, such as explicit pointer-style value-copy
 targets, value-boundary sentinel tokens, or a curriculum that first copies one
 requested value before scaling back to three-value ordered outputs.
 
+## AgentCoder One-Value Value-Only Gate
+
+Added a configurable target-field count to the existing key-value generator and
+runner so the value-only gate can train/evaluate one requested value before
+scaling back to three ordered values. The default remains three targets, so prior
+gates are unchanged unless `--target-fields` is passed.
+
+Changed files:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+
+Commit:
+
+- `b6c9bec Add one-value keyvalue gate curriculum knob`
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+rm -rf work/valueonly_one_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/valueonly_one_smoke/train.jsonl --cases-output work/valueonly_one_smoke/cases.json --manifest-output work/valueonly_one_smoke/manifest.json --completion-mode value_only --eval-mode coverage_ladder --train-records 12 --train-variants-per-row 3 --eval-cases 4 --target-fields 1
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+python3 scripts/run_agentcoder_keyvalue_copy_gate.py --help | grep -E 'target-fields|distractor-fields|value_only'
+git diff --check
+```
+
+Results:
+
+- focused key-value generator tests: `11 passed`
+- related generator bundle: `41 passed`
+- one-value smoke manifest: 12 base train rows, 3 variants per row, 36 train
+  records, `target_fields: 1`, `completion_mode: value_only`, and 12 eval cases
+  split evenly across `seen_slot`, `covered_value_slot`, and `heldout_slot`
+- runner help exposes `--target-fields` and `--distractor-fields`
+- `git diff --check` passed
+
+Remote Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueonly_onefield_compare_20260703T114312Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --max-new-tokens 24 --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueonly_onefield_compare_20260703T114312Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 1 \
+  --max-new-tokens 24 --clean --no-fail
+```
+
+Remote focused tests: `28 passed, 8 deselected`.
+
+One failed command was hit before training: the first RAAM launch tried to write
+`work/latest_onefield_run_id.txt` before the remote `work/` directory existed.
+Creating `work/` and rerunning the same gate fixed it.
+
+One-value coverage ladder results:
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out/OOV Pass | Value Sequence Accuracy | Behavior Accuracy | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM one-value | 32 / 96 | 27 / 32 | 5 / 32 | 0 / 32 | 32 / 96 | 96 / 96 | 0.685678 | 26499.6 |
+| Transformer one-value | 35 / 96 | 30 / 32 | 5 / 32 | 0 / 32 | 35 / 96 | 96 / 96 | 0.699391 | 28818.5 |
+
+Representative completions:
+
+- RAAM seen pass: expected `copy_service_000`; generated
+  `copy_service_000`.
+- RAAM seen fail: expected `case_module_004`; generated `case_adapter_004`.
+- RAAM covered-value pass: expected `copy_adapter_002.py`; generated
+  `copy_adapter_002.py`.
+- RAAM covered-value fail: expected `copy_route_000`; generated
+  `copy_service_000`.
+- RAAM held-out/OOV fail: expected `case_adapter_096`; generated `a`.
+- Transformer seen pass: expected `copy_service_000`; generated
+  `copy_service_000`.
+- Transformer covered-value pass: expected `copy_adapter_002.py`; generated
+  `copy_adapter_002.py`.
+- Transformer held-out/OOV fail: expected `case_adapter_096`; generated `,`.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_valueonly_onefield_compare_20260703T114312Z`
+
+Checkpoint weights were not pulled. After artifact pull, the remote RAAM and
+Transformer `last.pt` files for this run were deleted, and both Vast RTX 5090
+instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
+
+Interpretation: reducing the task from three values to one value substantially
+improves exact seen retrieval for both models and gives both a small covered-value
+signal, but it does not solve held-out/OOV value continuation. RAAM is no longer
+ahead on this simplified value-only gate; the matched Transformer is slightly
+better overall under the same tiny schedule. The next useful change should focus
+on span/value generalization rather than key selection: either add explicit
+value-boundary sentinels plus a one-value-to-three-value curriculum, or add a
+copy/span pointer head and compare it against the current copy-head-only path.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
