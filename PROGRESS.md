@@ -1789,3 +1789,71 @@ After artifact pulls, both Vast RTX 5090 instances were verified stopped:
 43627905 exited
 43634442 exited
 ```
+
+## AgentCoder Programmatic Slot-Copy Gate
+
+Implemented the next diagnostic step after the v6-v8 slot-copy failures: a
+larger programmatic slot-copy curriculum and held-out eval set.
+
+Added:
+
+- `scripts/make_agentcoder_slotcopy_sft.py`
+- `scripts/run_agentcoder_slotcopy_gate.py`
+- `tests/test_agentcoder_slotcopy_generator.py`
+
+Updated:
+
+- `scripts/eval_overfit_sanity.py` now preserves optional `slot_family` and
+  `expected_slots` metadata in eval results.
+- `docs/AGENTIC_CODING_EVALS.md` documents the new Slot-Copy Diagnostic Gate.
+
+Generator shape:
+
+| Family | Train records | Held-out eval cases | Purpose |
+| --- | ---: | ---: | --- |
+| `repo_lookup` | 48 | 16 | copy requested symbol and defining file from repo context with unrelated definitions |
+| `patch_return` | 48 | 16 | copy exact arithmetic file/helper/return expression/test command |
+| `patch_literal` | 48 | 16 | copy exact boolean-flag file/helper/enabled literal/test command |
+
+Total output: `144` train records and `48` held-out eval cases. Train and eval
+expected-slot tuples are disjoint. The runner summarizes pass rate, behavior
+accuracy, and slot-error count per family.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_slotcopy_sft.py scripts/run_agentcoder_slotcopy_gate.py scripts/eval_overfit_sanity.py scripts/make_agentcoder_curated_sft.py
+python3 scripts/make_agentcoder_slotcopy_sft.py --train-output work/slotcopy_gate_smoke/train.jsonl --cases-output work/slotcopy_gate_smoke/cases.json --manifest-output work/slotcopy_gate_smoke/manifest.json
+python3 -m pytest -q tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- syntax checks passed
+- generator emitted format `agentcoder-slotcopy-sft-v1`
+- train records: `144`
+- eval cases: `48`
+- train family counts: `48` each for `repo_lookup`, `patch_return`,
+  `patch_literal`
+- eval family counts: `16` each for `repo_lookup`, `patch_return`,
+  `patch_literal`
+- focused local tests passed: `4 passed in 0.07s`
+
+This has not yet been run on the RTX 5090. The next GPU action should be:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_slotcopy_generator.py
+/venv/main/bin/python scripts/run_agentcoder_slotcopy_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_slotcopy_gate_<UTC_TIMESTAMP> \
+  --device cuda \
+  --clean \
+  --no-fail
+/venv/main/bin/python -m pytest -q
+```
+
+Interpretation: this does not make the model useful yet. It creates the stronger
+preflight that was missing after the v8 result: many disjoint slot combinations,
+family-specific summaries, and exact forbidden-slot checks before another paid
+Stage 5 chat/coding continuation.

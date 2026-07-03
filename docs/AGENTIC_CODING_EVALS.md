@@ -129,6 +129,35 @@ Passing this gate still does not prove a useful model. It is a cheap control
 that checks whether the pipeline can learn reusable behavior patterns before
 spending on a larger supervised or continuation run.
 
+## Slot-Copy Diagnostic Gate
+
+If the curated gate reaches the right behavior family but fails exact file,
+function, symbol, literal, or test-command slots, run the larger slot-copy gate:
+
+```bash
+python scripts/run_agentcoder_slotcopy_gate.py \
+  --config configs/scratch/raam_agentcoder_curated_gate.yaml \
+  --output-dir runs/agentcoder_slotcopy_gate \
+  --device auto \
+  --clean
+```
+
+This gate generates a programmatic curriculum with held-out slot combinations:
+
+- `repo_lookup`: copy the requested symbol and defining file from a repo context
+  that includes several unrelated definitions.
+- `patch_return`: patch the exact arithmetic helper/file/return expression from
+  repo context while ignoring other similar buggy helpers.
+- `patch_literal`: patch the exact boolean-flag helper/file/enabled literal from
+  repo context while ignoring other flag helpers.
+
+The default generator writes `144` training records and `48` held-out eval cases:
+`48` train and `16` eval cases per slot family. Train and eval expected-slot
+tuples are disjoint. The eval cases include `slot_family` and `expected_slots`,
+and the runner summarizes pass rate, behavior accuracy, and slot-error count per
+family. This is still not a benchmark; it is a preflight for context binding
+before spending on broader chat/coding training.
+
 ## Comparing Gate Runs
 
 Use the gate comparison script after pulling one or more curated gate artifact

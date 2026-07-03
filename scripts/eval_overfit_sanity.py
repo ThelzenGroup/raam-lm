@@ -189,6 +189,10 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
             "required_substrings": [str(value) for value in required],
             "forbidden_substrings": [str(value) for value in forbidden],
         }
+        if "slot_family" in case:
+            item["slot_family"] = str(case["slot_family"])
+        if "expected_slots" in case:
+            item["expected_slots"] = case["expected_slots"]
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
         if "expected_behavior" in case:
@@ -388,10 +392,16 @@ def main() -> None:
             top_k=args.top_k,
         )
         score = score_case(case, generated["completion"])
+        case_metadata = {
+            key: case[key]
+            for key in ["slot_family", "expected_slots"]
+            if key in case
+        }
         results.append(
             {
                 "name": case["name"],
                 "prompt": case["prompt"],
+                **case_metadata,
                 **generated,
                 **score,
             }
