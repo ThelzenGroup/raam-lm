@@ -59,6 +59,42 @@ def test_keyvalue_seen_and_heldout_slots_are_distinct():
     assert heldout_slots.isdisjoint(train_slots)
 
 
+def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():
+    records = build_train_records(seed=17, train_records=TRAIN_RECORDS)
+    cases = build_eval_cases(
+        seed=17,
+        eval_mode="coverage_ladder",
+        train_records=TRAIN_RECORDS,
+        eval_cases=EVAL_CASES,
+    )
+    train_values = set()
+    for row in records:
+        for line in row["repo_context"].splitlines():
+            _, value = line.split(": ", 1)
+            train_values.add(value)
+        train_values.update(row["expected_slots"].values())
+    covered_cases = [row for row in cases if row["eval_tier"] == "covered_value_slot"]
+    heldout_cases = [row for row in cases if row["eval_tier"] == "heldout_slot"]
+
+    assert len(cases) == EVAL_CASES * 3
+    assert {row["eval_tier"] for row in cases} == {
+        "seen_slot",
+        "covered_value_slot",
+        "heldout_slot",
+    }
+    assert covered_cases
+    assert all(
+        value in train_values
+        for row in covered_cases
+        for value in row["expected_slots"].values()
+    )
+    assert any(
+        value not in train_values
+        for row in heldout_cases
+        for value in row["expected_slots"].values()
+    )
+
+
 def test_keyvalue_cases_require_exact_key_value_lines_and_forbid_distractors():
     cases = build_eval_cases(seed=17, eval_mode="heldout", train_records=16, eval_cases=8)
     row = cases[0]
@@ -85,7 +121,7 @@ def test_keyvalue_cli_writes_manifest_and_cases(tmp_path):
             "--manifest-output",
             str(manifest),
             "--eval-mode",
-            "ladder",
+            "coverage_ladder",
             "--train-records",
             "12",
             "--eval-cases",
@@ -97,12 +133,16 @@ def test_keyvalue_cli_writes_manifest_and_cases(tmp_path):
 
     payload = json.loads(manifest.read_text())
     assert payload["format"] == "agentcoder-keyvalue-copy-sft-v1"
-    assert payload["eval_mode"] == "ladder"
+    assert payload["eval_mode"] == "coverage_ladder"
     assert payload["train_records"] == 12
-    assert payload["eval_cases"] == 16
+    assert payload["eval_cases"] == 24
     assert payload["target_fields"] == TARGET_FIELDS
     assert payload["distractor_fields"] == DISTRACTOR_FIELDS
-    assert payload["eval_tier_counts"] == {"heldout_slot": 8, "seen_slot": 8}
+    assert payload["eval_tier_counts"] == {
+        "covered_value_slot": 8,
+        "heldout_slot": 8,
+        "seen_slot": 8,
+    }
     assert train.exists()
     assert cases.exists()
 

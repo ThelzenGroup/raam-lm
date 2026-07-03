@@ -83,7 +83,11 @@ def main() -> None:
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--eval-batches", type=int, default=None)
-    parser.add_argument("--eval-mode", choices=["mirror", "heldout", "ladder"], default="ladder")
+    parser.add_argument(
+        "--eval-mode",
+        choices=["mirror", "covered", "heldout", "ladder", "coverage_ladder"],
+        default="ladder",
+    )
     parser.add_argument("--train-records", type=int, default=96)
     parser.add_argument("--eval-cases", type=int, default=64)
     parser.add_argument("--max-new-tokens", type=int, default=64)

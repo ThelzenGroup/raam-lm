@@ -15,6 +15,7 @@ TRAIN_RECORDS = 96
 EVAL_CASES = 64
 TARGET_FIELDS = 3
 DISTRACTOR_FIELDS = 4
+EVAL_MODES = ["mirror", "covered", "heldout", "ladder", "coverage_ladder"]
 
 KEYS = [
     "symbol",
@@ -59,6 +60,13 @@ def spec(index: int) -> dict[str, Any]:
             }
         )
     return {"index": index, "fields": fields}
+
+
+def spec_with_seen_values(index: int, value_index: int, seed: int) -> dict[str, Any]:
+    """Use held-out prompt selection with values that appear in train records."""
+    train_rng = random.Random(seed + value_index * 17)
+    targets, distractors = choose_fields(spec(value_index), train_rng)
+    return {"index": index, "value_index": value_index, "fields": [*targets, *distractors]}
 
 
 def choose_fields(row: dict[str, Any], rng: random.Random) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -147,14 +155,14 @@ def build_eval_cases(
     train_records: int = TRAIN_RECORDS,
     eval_cases: int = EVAL_CASES,
 ) -> list[dict[str, Any]]:
-    if eval_mode not in {"mirror", "heldout", "ladder"}:
-        raise ValueError("eval_mode must be 'mirror', 'heldout', or 'ladder'")
+    if eval_mode not in EVAL_MODES:
+        raise ValueError(f"eval_mode must be one of {', '.join(EVAL_MODES)}")
     if train_records < 1:
         raise ValueError("train_records must be positive")
     if eval_cases < 1:
         raise ValueError("eval_cases must be positive")
     cases: list[dict[str, Any]] = []
-    if eval_mode in {"mirror", "ladder"}:
+    if eval_mode in {"mirror", "ladder", "coverage_ladder"}:
         cases.extend(
             case(
                 f"keyvalue_seen_{index:03d}",
@@ -164,7 +172,17 @@ def build_eval_cases(
             )
             for index in range(eval_cases)
         )
-    if eval_mode in {"heldout", "ladder"}:
+    if eval_mode in {"covered", "coverage_ladder"}:
+        cases.extend(
+            case(
+                f"keyvalue_covered_{index:03d}",
+                spec_with_seen_values(train_records + index, index % train_records, seed=seed),
+                "covered_value_slot",
+                seed=seed,
+            )
+            for index in range(eval_cases)
+        )
+    if eval_mode in {"heldout", "ladder", "coverage_ladder"}:
         cases.extend(
             case(
                 f"keyvalue_heldout_{index:03d}",
@@ -188,7 +206,7 @@ def main() -> None:
     parser.add_argument("--cases-output", default="examples/agentcoder_keyvalue_copy_cases.json")
     parser.add_argument("--manifest-output", default="examples/agentcoder_keyvalue_copy_manifest.json")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--eval-mode", choices=["mirror", "heldout", "ladder"], default="ladder")
+    parser.add_argument("--eval-mode", choices=EVAL_MODES, default="ladder")
     parser.add_argument("--train-records", type=int, default=TRAIN_RECORDS)
     parser.add_argument("--eval-cases", type=int, default=EVAL_CASES)
     args = parser.parse_args()
