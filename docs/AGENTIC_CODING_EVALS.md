@@ -247,8 +247,20 @@ python scripts/run_agentcoder_atomic_cardinality_sweep.py \
 ```
 
 If token-ID anchors preserve rare tokens but lose too much of the learned route,
-test a hybrid selector that reserves two anchors per block for high token IDs and
-fills the remaining two anchors with learned content scores:
+test a minimal hybrid selector that reserves one anchor per block for high token
+IDs and fills the remaining three anchors with learned content scores:
+
+```bash
+python scripts/run_agentcoder_atomic_cardinality_sweep.py \
+  --models raam \
+  --raam-config configs/scratch/raam_agentcoder_atomic_hybrid1_anchor_attention_gate.yaml \
+  --train-records 4,8,16,32,64 \
+  --output-dir runs/agentcoder_atomic_cardinality_sweep_raam_hybrid1_anchor_attention \
+  --device auto \
+  --clean
+```
+
+If one reserved token-ID anchor is too weak, test a stronger two-anchor hybrid:
 
 ```bash
 python scripts/run_agentcoder_atomic_cardinality_sweep.py \
