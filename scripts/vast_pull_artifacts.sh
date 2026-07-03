@@ -55,11 +55,12 @@ pull_once() {
     rm -rf "$LOCAL_DIR/.incoming"
     mkdir -p "$LOCAL_DIR/.incoming"
     tar_exclude=""
+    remote_base="$(basename "$REMOTE_RUN_DIR")"
     if [[ "$INCLUDE_CHECKPOINTS" != "1" ]]; then
       if [[ "$INCLUDE_MODEL_EXPORT" == "1" ]]; then
-        tar_exclude="--exclude='$(basename "$REMOTE_RUN_DIR")/checkpoints/last.pt' --exclude='$(basename "$REMOTE_RUN_DIR")/checkpoints/step_*.pt'"
+        tar_exclude="--exclude='$remote_base/checkpoints/last.pt' --exclude='$remote_base/checkpoints/step_*.pt' --exclude='$remote_base/*/checkpoints/last.pt' --exclude='$remote_base/*/checkpoints/step_*.pt' --exclude='$remote_base/*/*/checkpoints/last.pt' --exclude='$remote_base/*/*/checkpoints/step_*.pt'"
       else
-        tar_exclude="--exclude='$(basename "$REMOTE_RUN_DIR")/checkpoints/*.pt'"
+        tar_exclude="--exclude='$remote_base/checkpoints/*.pt' --exclude='$remote_base/checkpoints/*.safetensors' --exclude='$remote_base/*/checkpoints/*.pt' --exclude='$remote_base/*/checkpoints/*.safetensors' --exclude='$remote_base/*/*/checkpoints/*.pt' --exclude='$remote_base/*/*/checkpoints/*.safetensors'"
       fi
     fi
     ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -p "$port" "root@$host" \

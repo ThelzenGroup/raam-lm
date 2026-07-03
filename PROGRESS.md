@@ -2235,6 +2235,84 @@ slot-binding from byte-generation, or add a true sequential span-copy route that
 can copy byte-fallback values from the current context without relying on the
 value being a learned whole token.
 
+## AgentCoder Key-Value Coverage Ladder
+
+Added a `coverage_ladder` eval mode to
+`scripts/make_agentcoder_keyvalue_copy_sft.py` and
+`scripts/run_agentcoder_keyvalue_copy_gate.py`. It keeps the original
+`seen_slot` and `heldout_slot` tiers and adds `covered_value_slot`, where the
+prompt/target selection changes but every target and distractor value is drawn
+from key-value rows that appeared in the training JSONL. This separates
+tokenizer/value coverage from true key-lookup generalization.
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py
+rm -rf work/keyvalue_coverage_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/keyvalue_coverage_smoke/train.jsonl --cases-output work/keyvalue_coverage_smoke/cases.json --manifest-output work/keyvalue_coverage_smoke/manifest.json --eval-mode coverage_ladder --train-records 12 --eval-cases 4
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+bash -n scripts/vast_pull_artifacts.sh
+```
+
+Results:
+
+- generator test file: `7 passed`
+- related copy-generator bundle: `37 passed`
+- smoke manifest: 12 train records and 12 eval cases split evenly across
+  `seen_slot`, `covered_value_slot`, and `heldout_slot`
+- `git diff --check` passed
+- `vast_pull_artifacts.sh` syntax check passed
+
+Also tightened `scripts/vast_pull_artifacts.sh` so tar-mode pulls exclude nested
+checkpoint weights under paths such as `raam/train/checkpoints/*.pt` and
+`transformer/train/checkpoints/*.pt`.
+
+Pushed `d420acc` and ran the coverage ladder on Vast RTX 5090 instance
+`43634442`:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_coverage_ladder_compare_20260703T104034Z/raam \
+  --device cuda --seed 29 --train-records 96 --eval-cases 32 \
+  --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode coverage_ladder --clean --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_keyvalue_coverage_ladder_compare_20260703T104034Z/transformer \
+  --device cuda --seed 29 --train-records 96 --eval-cases 32 \
+  --steps 1600 --seq-len 128 --vocab-size 2048 --eval-mode coverage_ladder --clean --no-fail
+```
+
+Remote focused tests: `24 passed, 8 deselected`.
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out Pass | Behavior Accuracy | Val Loss | Tokens/sec | FLOPs/token | Non-embedding Params |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM key-value key-follow | 31 / 96 | 31 / 32 | 0 / 32 | 0 / 32 | 96 / 96 | 0.094837 | 26782.8 | 2524160 | 1208962 |
+| Transformer key-value key-follow | 16 / 96 | 16 / 32 | 0 / 32 | 0 / 32 | 96 / 96 | 0.342092 | 22171.1 | 3116928 | 1082496 |
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_keyvalue_coverage_ladder_compare_20260703T104034Z`
+
+Checkpoint weights were removed from the local artifact copy after verifying the
+tar-mode pull exclusion gap.
+
+Interpretation: the previous OOV-only explanation was incomplete. The new
+covered-value tier uses values present in training text, yet both RAAM and the
+Transformer fail `0 / 32`. The tiny gates are mostly memorizing exact prompt
+layouts rather than learning a reusable repo-context key lookup algorithm. RAAM
+is currently better than the Transformer on exact seen prompts for this run, but
+neither model has the slot-binding robustness needed for agentic coding.
+
+Next useful step: change the training generator, not the architecture knob. For
+each value row, train multiple randomized target/distractor/order variants so
+the model cannot pass by memorizing one exact context layout, then rerun
+`coverage_ladder`. A good gate should first reach high `covered_value_slot`
+accuracy before spending more time on OOV byte-copy mechanics.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
