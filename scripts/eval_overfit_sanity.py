@@ -200,6 +200,11 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
             if not isinstance(expected_key_sequence, list):
                 raise ValueError(f"case {index} expected_key_sequence must be a list")
             item["expected_key_sequence"] = [str(value) for value in expected_key_sequence]
+        if "expected_value_sequence" in case:
+            expected_value_sequence = case["expected_value_sequence"]
+            if not isinstance(expected_value_sequence, list):
+                raise ValueError(f"case {index} expected_value_sequence must be a list")
+            item["expected_value_sequence"] = [str(value) for value in expected_value_sequence]
         if "target_keys" in case:
             target_keys = case["target_keys"]
             if not isinstance(target_keys, list):
@@ -207,6 +212,8 @@ def load_cases(path: str | None) -> list[dict[str, Any]]:
             item["target_keys"] = [str(value) for value in target_keys]
         if "enforce_key_sequence" in case:
             item["enforce_key_sequence"] = bool(case["enforce_key_sequence"])
+        if "enforce_value_sequence" in case:
+            item["enforce_value_sequence"] = bool(case["enforce_value_sequence"])
         if "expected_json" in case:
             item["expected_json"] = case["expected_json"]
         if "expected_behavior" in case:
@@ -339,9 +346,45 @@ def expected_key_sequence(case: dict[str, Any]) -> list[str] | None:
     return None
 
 
+def generated_value_sequence(completion: str) -> list[str]:
+    values: list[str] = []
+    for raw_line in completion.replace("<eos>", "\n").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "=" in line:
+            _, value = line.split("=", 1)
+        else:
+            value = line
+        value = value.strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def expected_value_sequence(case: dict[str, Any]) -> list[str] | None:
+    if "expected_value_sequence" in case:
+        return list(case["expected_value_sequence"])
+    expected_slots = case.get("expected_slots")
+    expected_keys = expected_key_sequence(case)
+    if isinstance(expected_slots, dict) and expected_keys is not None:
+        return [str(expected_slots[key]) for key in expected_keys if key in expected_slots]
+    return None
+
+
 def build_key_sequence_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     labeled = [row for row in results if row.get("key_sequence_correct") is not None]
     correct = sum(1 for row in labeled if row.get("key_sequence_correct"))
+    return {
+        "labeled_cases": len(labeled),
+        "correct_count": correct,
+        "accuracy": correct / len(labeled) if labeled else None,
+    }
+
+
+def build_value_sequence_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    labeled = [row for row in results if row.get("value_sequence_correct") is not None]
+    correct = sum(1 for row in labeled if row.get("value_sequence_correct"))
     return {
         "labeled_cases": len(labeled),
         "correct_count": correct,
@@ -409,15 +452,25 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
     expected_keys = expected_key_sequence(case)
     generated_keys = generated_key_sequence(completion, allowed_keys=expected_keys) if expected_keys is not None else None
     key_sequence_correct = generated_keys == expected_keys if expected_keys is not None else None
+    expected_values = expected_value_sequence(case)
+    generated_values = generated_value_sequence(completion) if expected_values is not None else None
+    value_sequence_correct = generated_values == expected_values if expected_values is not None else None
     if expected_behavior == "copy_key_sequence" and generated_keys and predicted_behavior == "unknown":
         predicted_behavior = "copy_key_sequence"
+    if expected_behavior == "copy_value_sequence" and generated_values and predicted_behavior == "unknown":
+        predicted_behavior = "copy_value_sequence"
     behavior_correct = predicted_behavior == expected_behavior if expected_behavior is not None else None
     enforce_key_sequence = bool(case.get("enforce_key_sequence", expected_keys is not None))
+    enforce_value_sequence = bool(case.get("enforce_value_sequence", False))
     passed = not missing and not present_forbidden and (json_ok is not False)
     if enforce_key_sequence:
         passed = passed and key_sequence_correct is True
+    if enforce_value_sequence:
+        passed = passed and value_sequence_correct is True
     slot_error = bool(behavior_correct and (missing or present_forbidden))
     if behavior_correct and enforce_key_sequence and key_sequence_correct is False:
+        slot_error = True
+    if behavior_correct and enforce_value_sequence and value_sequence_correct is False:
         slot_error = True
     return {
         "missing_required_substrings": missing,
@@ -433,6 +486,10 @@ def score_case(case: dict[str, Any], completion: str) -> dict[str, Any]:
         "generated_key_sequence": generated_keys,
         "key_sequence_correct": key_sequence_correct,
         "enforce_key_sequence": enforce_key_sequence,
+        "expected_value_sequence": expected_values,
+        "generated_value_sequence": generated_values,
+        "value_sequence_correct": value_sequence_correct,
+        "enforce_value_sequence": enforce_value_sequence,
         "slot_error": slot_error,
         "passed": passed,
     }
@@ -479,7 +536,14 @@ def main() -> None:
         score = score_case(case, generated["completion"])
         case_metadata = {
             key: case[key]
-            for key in ["slot_family", "eval_tier", "expected_slots", "expected_key_sequence", "target_keys"]
+            for key in [
+                "slot_family",
+                "eval_tier",
+                "expected_slots",
+                "expected_key_sequence",
+                "expected_value_sequence",
+                "target_keys",
+            ]
             if key in case
         }
         results.append(
@@ -495,6 +559,7 @@ def main() -> None:
     passed = sum(1 for row in results if row["passed"])
     behavior_confusion = build_behavior_confusion(results)
     key_sequence_summary = build_key_sequence_summary(results)
+    value_sequence_summary = build_value_sequence_summary(results)
     payload = {
         "metadata": {
             "config": args.config,
@@ -519,6 +584,9 @@ def main() -> None:
         "key_sequence_labeled_cases": key_sequence_summary["labeled_cases"],
         "key_sequence_correct_count": key_sequence_summary["correct_count"],
         "key_sequence_accuracy": key_sequence_summary["accuracy"],
+        "value_sequence_labeled_cases": value_sequence_summary["labeled_cases"],
+        "value_sequence_correct_count": value_sequence_summary["correct_count"],
+        "value_sequence_accuracy": value_sequence_summary["accuracy"],
         "results": results,
     }
     path = Path(args.output)

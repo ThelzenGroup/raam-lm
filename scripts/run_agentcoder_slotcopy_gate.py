@@ -37,6 +37,8 @@ def summarize_slot_families(eval_payload: dict[str, Any]) -> dict[str, dict[str,
         behavior_correct = sum(1 for row in behavior_labeled if row.get("behavior_correct"))
         key_sequence_labeled = [row for row in rows if row.get("key_sequence_correct") is not None]
         key_sequence_correct = sum(1 for row in key_sequence_labeled if row.get("key_sequence_correct"))
+        value_sequence_labeled = [row for row in rows if row.get("value_sequence_correct") is not None]
+        value_sequence_correct = sum(1 for row in value_sequence_labeled if row.get("value_sequence_correct"))
         summary[family] = {
             "case_count": len(rows),
             "pass_count": passed,
@@ -45,6 +47,9 @@ def summarize_slot_families(eval_payload: dict[str, Any]) -> dict[str, dict[str,
             "behavior_accuracy": behavior_correct / len(behavior_labeled) if behavior_labeled else None,
             "key_sequence_accuracy": (
                 key_sequence_correct / len(key_sequence_labeled) if key_sequence_labeled else None
+            ),
+            "value_sequence_accuracy": (
+                value_sequence_correct / len(value_sequence_labeled) if value_sequence_labeled else None
             ),
             "failed_cases": [row.get("name") for row in rows if not row.get("passed")],
         }
@@ -68,6 +73,8 @@ def summarize_ladder(eval_payload: dict[str, Any]) -> dict[str, Any]:
             behavior_correct = sum(1 for row in behavior_labeled if row.get("behavior_correct"))
             key_sequence_labeled = [row for row in rows if row.get("key_sequence_correct") is not None]
             key_sequence_correct = sum(1 for row in key_sequence_labeled if row.get("key_sequence_correct"))
+            value_sequence_labeled = [row for row in rows if row.get("value_sequence_correct") is not None]
+            value_sequence_correct = sum(1 for row in value_sequence_labeled if row.get("value_sequence_correct"))
             summary[family][tier] = {
                 "case_count": len(rows),
                 "pass_count": passed,
@@ -76,6 +83,9 @@ def summarize_ladder(eval_payload: dict[str, Any]) -> dict[str, Any]:
                 "behavior_accuracy": behavior_correct / len(behavior_labeled) if behavior_labeled else None,
                 "key_sequence_accuracy": (
                     key_sequence_correct / len(key_sequence_labeled) if key_sequence_labeled else None
+                ),
+                "value_sequence_accuracy": (
+                    value_sequence_correct / len(value_sequence_labeled) if value_sequence_labeled else None
                 ),
                 "failed_cases": [row.get("name") for row in rows if not row.get("passed")],
             }

@@ -17,7 +17,7 @@ EVAL_CASES = 64
 TARGET_FIELDS = 3
 DISTRACTOR_FIELDS = 4
 EVAL_MODES = ["mirror", "covered", "heldout", "ladder", "coverage_ladder"]
-COMPLETION_MODES = ["keyvalue", "key_only"]
+COMPLETION_MODES = ["keyvalue", "key_only", "value_only"]
 
 KEYS = [
     "symbol",
@@ -89,12 +89,16 @@ def user_prompt(targets: list[dict[str, str]], completion_mode: str = "keyvalue"
     keys = ", ".join(field["key"] for field in targets)
     if completion_mode == "key_only":
         return f"List these repo_context keys exactly and in order: {keys}. Return only one key per line."
+    if completion_mode == "value_only":
+        return f"Copy only the values for these repo_context keys exactly and in order: {keys}. Return only one value per line."
     return f"Copy these repo_context fields exactly and in order: {keys}. Return only key=value lines."
 
 
 def assistant_text(targets: list[dict[str, str]], completion_mode: str = "keyvalue") -> str:
     if completion_mode == "key_only":
         return "\n".join(field["key"] for field in targets)
+    if completion_mode == "value_only":
+        return "\n".join(field["value"] for field in targets)
     return "\n".join(f"{field['key']}={field['value']}" for field in targets)
 
 
@@ -107,7 +111,11 @@ def chat_prompt(
     response_instruction = (
         "Return only exact key names, one per line."
         if completion_mode == "key_only"
-        else "Return only exact key=value lines."
+        else (
+            "Return only exact values, one per line."
+            if completion_mode == "value_only"
+            else "Return only exact key=value lines."
+        )
     )
     return (
         "<|system|>\n"
@@ -146,16 +154,29 @@ def record(
     response_instruction = (
         "Return only exact key names, one per line."
         if completion_mode == "key_only"
-        else "Return only exact key=value lines."
+        else (
+            "Return only exact values, one per line."
+            if completion_mode == "value_only"
+            else "Return only exact key=value lines."
+        )
     )
-    expected_behavior = "copy_key_sequence" if completion_mode == "key_only" else "copy_slot_values"
-    slot_family = "keyvalue_repo_key_only" if completion_mode == "key_only" else "keyvalue_repo_copy"
+    expected_behavior = (
+        "copy_key_sequence"
+        if completion_mode == "key_only"
+        else ("copy_value_sequence" if completion_mode == "value_only" else "copy_slot_values")
+    )
+    slot_family = (
+        "keyvalue_repo_key_only"
+        if completion_mode == "key_only"
+        else ("keyvalue_repo_value_only" if completion_mode == "value_only" else "keyvalue_repo_copy")
+    )
     return {
         "behavior": expected_behavior,
         "slot_family": slot_family,
         "source_row_index": row_index,
         "train_variant_index": variant_index,
         "target_keys": [field["key"] for field in targets],
+        "target_values": [field["value"] for field in targets],
         "expected_slots": expected_slots(targets),
         "system": f"{SYSTEM} {response_instruction}",
         "repo_context": repo_context(targets, distractors, rng),
@@ -175,17 +196,33 @@ def case(
         raise ValueError(f"completion_mode must be one of {', '.join(COMPLETION_MODES)}")
     rng = random.Random(seed + int(row["index"]) * 17)
     targets, distractors = choose_fields(row, rng)
-    expected_behavior = "copy_key_sequence" if completion_mode == "key_only" else "copy_slot_values"
-    slot_family = "keyvalue_repo_key_only" if completion_mode == "key_only" else "keyvalue_repo_copy"
+    expected_behavior = (
+        "copy_key_sequence"
+        if completion_mode == "key_only"
+        else ("copy_value_sequence" if completion_mode == "value_only" else "copy_slot_values")
+    )
+    slot_family = (
+        "keyvalue_repo_key_only"
+        if completion_mode == "key_only"
+        else ("keyvalue_repo_value_only" if completion_mode == "value_only" else "keyvalue_repo_copy")
+    )
     required_substrings = (
         [field["key"] for field in targets]
         if completion_mode == "key_only"
-        else [f"{field['key']}={field['value']}" for field in targets]
+        else (
+            [field["value"] for field in targets]
+            if completion_mode == "value_only"
+            else [f"{field['key']}={field['value']}" for field in targets]
+        )
     )
     forbidden = (
-        [field["key"] for field in distractors]
+        [field["key"] for field in distractors] + ["="]
         if completion_mode == "key_only"
-        else forbidden_substrings(distractors)
+        else (
+            [field["value"] for field in distractors] + ["="]
+            if completion_mode == "value_only"
+            else forbidden_substrings(distractors)
+        )
     )
     return {
         "name": name,
@@ -196,7 +233,9 @@ def case(
         "slot_family": slot_family,
         "expected_slots": expected_slots(targets),
         "expected_key_sequence": [field["key"] for field in targets],
-        "enforce_key_sequence": True,
+        "expected_value_sequence": [field["value"] for field in targets],
+        "enforce_key_sequence": completion_mode in {"keyvalue", "key_only"},
+        "enforce_value_sequence": completion_mode in {"keyvalue", "value_only"},
         "eval_tier": eval_tier,
         "value_formats": sorted({field["value_format"] for field in targets}),
         "target_keys": [field["key"] for field in targets],

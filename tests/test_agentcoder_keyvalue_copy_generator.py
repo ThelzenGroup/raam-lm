@@ -31,7 +31,7 @@ def test_keyvalue_generator_builds_ladder_with_distractors_and_formats():
 
     assert len(records) == TRAIN_RECORDS
     assert TRAIN_VARIANTS_PER_ROW == 1
-    assert COMPLETION_MODES == ["keyvalue", "key_only"]
+    assert COMPLETION_MODES == ["keyvalue", "key_only", "value_only"]
     assert len(cases) == EVAL_CASES * 2
     assert {row["slot_family"] for row in records} == {"keyvalue_repo_copy"}
     assert {row["slot_family"] for row in cases} == {"keyvalue_repo_copy"}
@@ -41,6 +41,7 @@ def test_keyvalue_generator_builds_ladder_with_distractors_and_formats():
     assert all(len(row["expected_slots"]) == TARGET_FIELDS for row in cases)
     assert all(len(row["target_keys"]) == TARGET_FIELDS for row in records)
     assert all(row["enforce_key_sequence"] is True for row in cases)
+    assert all(row["enforce_value_sequence"] is True for row in cases)
     assert all(len(row["forbidden_substrings"]) == DISTRACTOR_FIELDS for row in cases)
     assert set(KEYS).issubset({key for row in cases for key in row["target_keys"]})
     assert set(VALUE_FORMATS).issubset({fmt for row in cases for fmt in row["value_formats"]})
@@ -115,7 +116,54 @@ def test_keyvalue_key_only_mode_emits_requested_key_sequence_without_values():
     assert first_case["required_substrings"] == first_case["target_keys"]
     assert first_case["expected_key_sequence"] == first_case["target_keys"]
     assert first_case["enforce_key_sequence"] is True
+    assert first_case["enforce_value_sequence"] is False
     assert all("=" not in value for value in first_case["required_substrings"])
+    assert "=" in first_case["forbidden_substrings"]
+    assert {row["eval_tier"] for row in cases} == {
+        "seen_slot",
+        "covered_value_slot",
+        "heldout_slot",
+    }
+
+
+def test_keyvalue_value_only_mode_emits_requested_values_without_keys():
+    records = build_train_records(
+        seed=17,
+        train_records=4,
+        train_variants_per_row=2,
+        completion_mode="value_only",
+    )
+    cases = build_eval_cases(
+        seed=17,
+        eval_mode="coverage_ladder",
+        train_records=4,
+        eval_cases=2,
+        completion_mode="value_only",
+    )
+    first_record = records[0]
+    first_case = cases[0]
+    completion = first_record["trace"][0]["content"]
+
+    assert len(records) == 8
+    assert {row["behavior"] for row in records} == {"copy_value_sequence"}
+    assert {row["slot_family"] for row in records} == {"keyvalue_repo_value_only"}
+    assert "=" not in completion
+    assert completion.splitlines() == first_record["target_values"]
+    assert first_record["target_values"] == [
+        first_record["expected_slots"][key] for key in first_record["target_keys"]
+    ]
+    assert "one per line" in first_record["system"]
+    assert "Return only one value per line" in first_record["messages"][0]["content"]
+    assert first_case["expected_behavior"] == "copy_value_sequence"
+    assert first_case["slot_family"] == "keyvalue_repo_value_only"
+    assert first_case["required_substrings"] == first_case["expected_value_sequence"]
+    assert first_case["expected_value_sequence"] == [
+        first_case["expected_slots"][key] for key in first_case["target_keys"]
+    ]
+    assert first_case["enforce_key_sequence"] is False
+    assert first_case["enforce_value_sequence"] is True
+    assert all("=" not in value for value in first_case["required_substrings"])
+    assert "=" in first_case["forbidden_substrings"]
     assert {row["eval_tier"] for row in cases} == {
         "seen_slot",
         "covered_value_slot",
@@ -227,6 +275,7 @@ def test_keyvalue_summaries_count_tiers():
                 "slot_error": False,
                 "behavior_correct": True,
                 "key_sequence_correct": True,
+                "value_sequence_correct": True,
                 "name": "seen",
             },
             {
@@ -236,6 +285,7 @@ def test_keyvalue_summaries_count_tiers():
                 "slot_error": True,
                 "behavior_correct": True,
                 "key_sequence_correct": False,
+                "value_sequence_correct": False,
                 "name": "heldout",
             },
         ]
@@ -247,10 +297,13 @@ def test_keyvalue_summaries_count_tiers():
     assert family["keyvalue_repo_copy"]["pass_count"] == 1
     assert family["keyvalue_repo_copy"]["slot_error_count"] == 1
     assert family["keyvalue_repo_copy"]["key_sequence_accuracy"] == 0.5
+    assert family["keyvalue_repo_copy"]["value_sequence_accuracy"] == 0.5
     assert ladder["keyvalue_repo_copy"]["seen_slot"]["pass_rate"] == 1.0
     assert ladder["keyvalue_repo_copy"]["seen_slot"]["key_sequence_accuracy"] == 1.0
+    assert ladder["keyvalue_repo_copy"]["seen_slot"]["value_sequence_accuracy"] == 1.0
     assert ladder["keyvalue_repo_copy"]["heldout_slot"]["failed_cases"] == ["heldout"]
     assert ladder["keyvalue_repo_copy"]["heldout_slot"]["key_sequence_accuracy"] == 0.0
+    assert ladder["keyvalue_repo_copy"]["heldout_slot"]["value_sequence_accuracy"] == 0.0
 
 
 def test_keyvalue_key_follow_configs_enable_same_route():
