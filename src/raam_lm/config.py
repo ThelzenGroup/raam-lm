@@ -61,6 +61,12 @@ class CopyHeadConfig:
     binding_carry_source_window: int = 0
     binding_carry_min_source_gap: int = 0
     binding_carry_max_anchor_occurrences: int = 0
+    key_follow_strength: float = 0.0
+    key_follow_recent_tokens: int = 0
+    key_follow_value_offset: int = 0
+    key_follow_value_span: int = 1
+    key_follow_min_source_gap: int = 0
+    key_follow_source_until_token_id: int = -1
 
 
 @dataclass

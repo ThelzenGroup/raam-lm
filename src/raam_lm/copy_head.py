@@ -104,6 +104,71 @@ class CausalCopyHead(nn.Module):
         denom = carry.sum(dim=-1, keepdim=True)
         return torch.where(denom > 0, carry / denom.clamp_min(1e-12), torch.zeros_like(carry))
 
+    def _source_region_mask(
+        self,
+        input_ids: torch.Tensor,
+        source_mask: torch.Tensor,
+        *,
+        min_source_gap: int,
+        source_until_token_id: int,
+    ) -> torch.Tensor:
+        bsz, seq_len = input_ids.shape
+        positions = torch.arange(seq_len, device=input_ids.device)
+        region = source_mask.expand(bsz, -1, -1)
+        if min_source_gap:
+            region = region & ((positions[None, :, None] - positions[None, None, :]) >= min_source_gap)
+        if source_until_token_id >= 0:
+            boundary_positions = torch.where(
+                input_ids == source_until_token_id,
+                positions.unsqueeze(0),
+                torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+            )
+            last_boundary = torch.cummax(boundary_positions, dim=1).values
+            region = region & (positions[None, None, :] < last_boundary[:, :, None])
+        return region
+
+    def _key_follow_probs_by_pos(
+        self,
+        input_ids: torch.Tensor,
+        source_mask: torch.Tensor,
+    ) -> torch.Tensor | None:
+        recent_tokens = max(0, int(self.config.key_follow_recent_tokens))
+        value_offset = max(1, int(self.config.key_follow_value_offset))
+        value_span = max(1, int(self.config.key_follow_value_span))
+        strength = float(self.config.key_follow_strength)
+        if not strength or not recent_tokens:
+            return None
+
+        bsz, seq_len = input_ids.shape
+        min_source_gap = max(0, int(self.config.key_follow_min_source_gap))
+        source_until_token_id = int(self.config.key_follow_source_until_token_id)
+        positions = torch.arange(seq_len, device=input_ids.device)
+        follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
+        source_region = self._source_region_mask(
+            input_ids,
+            source_mask,
+            min_source_gap=min_source_gap,
+            source_until_token_id=source_until_token_id,
+        )
+
+        for recent_offset in range(1, recent_tokens + 1):
+            recent_weight = float(recent_tokens - recent_offset + 1)
+            recent_valid = positions >= recent_offset
+            recent_pos = (positions - recent_offset).clamp_min(0)
+            recent_ids = input_ids[:, recent_pos]
+            for offset in range(value_offset, value_offset + value_span):
+                key_pos = positions - offset
+                key_valid = key_pos >= 0
+                clipped_key_pos = key_pos.clamp(0, seq_len - 1)
+                key_ids = input_ids[:, clipped_key_pos]
+                pair_valid = recent_valid[:, None] & key_valid[None, :]
+                matches = recent_ids[:, :, None] == key_ids[:, None, :]
+                valid = pair_valid.unsqueeze(0) & source_region
+                follow = follow + recent_weight * (matches & valid).to(dtype=follow.dtype)
+
+        denom = follow.sum(dim=-1, keepdim=True)
+        return torch.where(denom > 0, follow / denom.clamp_min(1e-12), torch.zeros_like(follow))
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -149,4 +214,12 @@ class CausalCopyHead(nn.Module):
                     self.config.binding_carry_strength
                 )
                 copy_logits = torch.logaddexp(copy_logits, carry_logits)
+            key_follow_probs_by_pos = self._key_follow_probs_by_pos(input_ids, source_mask)
+            if key_follow_probs_by_pos is not None:
+                key_follow_probs_by_vocab = torch.zeros_like(copy_probs_by_vocab)
+                key_follow_probs_by_vocab.scatter_add_(dim=-1, index=index, src=key_follow_probs_by_pos)
+                key_follow_logits = torch.log(key_follow_probs_by_vocab.clamp_min(1e-12)) + float(
+                    self.config.key_follow_strength
+                )
+                copy_logits = torch.logaddexp(copy_logits, key_follow_logits)
             return torch.logaddexp(lm_logits, copy_logits)

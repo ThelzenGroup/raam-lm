@@ -62,4 +62,9 @@ def estimate_flops_per_token(config: ModelConfig) -> int:
             window = max(0, int(config.copy_head.binding_carry_source_window))
             occurrence_scan = seq if config.copy_head.binding_carry_max_anchor_occurrences else 0
             copy += seq * recent * (window + occurrence_scan + 1)
+        if config.copy_head.key_follow_strength:
+            recent = max(0, int(config.copy_head.key_follow_recent_tokens))
+            span = max(1, int(config.copy_head.key_follow_value_span))
+            boundary_scan = seq if config.copy_head.key_follow_source_until_token_id >= 0 else 0
+            copy += seq * recent * (span + boundary_scan + 1)
     return int(body + head + mtp + copy)
