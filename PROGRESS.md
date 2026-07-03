@@ -1840,20 +1840,68 @@ Results:
   `patch_literal`
 - focused local tests passed: `4 passed in 0.07s`
 
-This has not yet been run on the RTX 5090. The next GPU action should be:
+Vast RTX 5090 validation:
 
 ```bash
 /venv/main/bin/python -m pytest -q tests/test_agentcoder_slotcopy_generator.py
 /venv/main/bin/python scripts/run_agentcoder_slotcopy_gate.py \
   --config configs/scratch/raam_agentcoder_curated_gate.yaml \
-  --output-dir /root/raam-lm/runs/agentcoder_slotcopy_gate_<UTC_TIMESTAMP> \
+  --output-dir /root/raam-lm/runs/agentcoder_slotcopy_gate_20260703T050322Z \
   --device cuda \
   --clean \
   --no-fail
 /venv/main/bin/python -m pytest -q
 ```
 
-Interpretation: this does not make the model useful yet. It creates the stronger
-preflight that was missing after the v8 result: many disjoint slot combinations,
-family-specific summaries, and exact forbidden-slot checks before another paid
-Stage 5 chat/coding continuation.
+Remote results:
+
+- focused slot-copy generator tests: `4 passed in 0.10s`
+- full remote test suite: `32 passed in 32.66s`
+- run id: `agentcoder_slotcopy_gate_20260703T050322Z`
+- train records: `144`
+- eval cases: `48`
+- train tokens: `51564`
+- validation tokens: `12756`
+- non-embedding params: `1244802`
+- estimated FLOPs/token: `2336384`
+- final train loss: `0.05523088574409485`
+- final validation loss: `0.2700197398662567`
+- final tokens/sec: `68546.0167564717`
+- exact pass rate: `0 / 48`
+- behavior accuracy: `48 / 48`
+
+| Family | Cases | Exact Pass | Slot Errors | Behavior Accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| `repo_lookup` | 16 | 0 | 16 | 1.0 |
+| `patch_return` | 16 | 0 | 16 | 1.0 |
+| `patch_literal` | 16 | 0 | 16 | 1.0 |
+
+Local artifact pull:
+`/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_slotcopy_gate_20260703T050322Z`.
+Checkpoint weights were not pulled.
+
+Representative failures:
+
+- `slot_repo_lookup_00_format_user`: selected repo lookup behavior but copied
+  the distractor `extract_title` / `title_extract_00.py` slot instead of
+  `format_user` / `user_format_03.py`.
+- `slot_patch_return_00_append_capacity`: produced an arithmetic patch in the
+  right style but copied unrelated file/helper slots such as
+  `amount_blend_08.py`.
+- `slot_patch_literal_00_notify_enabled`: produced a boolean flag patch in the
+  right style but copied unrelated file/helper slots such as
+  `export_open_05.py`.
+
+Interpretation: this is the clearest blocker so far. The tiny RAAM-AgentCoder
+model can learn the response family, and the low validation loss is misleading,
+but it does not bind held-out file/function/literal slots from context. Do not
+launch a larger paid chat/coding run as if this is solved. The next useful step
+is a slot-binding ladder that separates seen-slot memorization from held-out
+slot generalization before returning to broader Stage 5 continuation.
+
+After artifact pull, both Vast RTX 5090 instances were verified stopped:
+
+```text
+43627905 exited
+43634442 exited
+```
