@@ -2519,6 +2519,130 @@ Local artifact pull:
 
 Checkpoint weights were not pulled.
 
+## AgentCoder Value-Only Variant Gate
+
+Added a key-conditioned value-only mode to the key-value repo-context gate. This
+mode gives the model the same `repo_context` rows plus the requested key order,
+but asks it to emit only the corresponding values, one per line. The purpose is
+to separate value retrieval/continuation from key-order selection after the
+key-only gate showed RAAM could solve requested-key emission.
+
+Changed files:
+
+- `scripts/make_agentcoder_keyvalue_copy_sft.py`
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+- `scripts/eval_overfit_sanity.py`
+- `tests/test_agentcoder_keyvalue_copy_generator.py`
+
+Commits:
+
+- `aebeb70 Add value-only repo value gate`
+- `7409b50 Allow value-only keyvalue gate runner`
+- `c66648d Only score enforced sequence metrics`
+
+Local verification:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_keyvalue_copy_sft.py scripts/run_agentcoder_keyvalue_copy_gate.py scripts/eval_overfit_sanity.py scripts/run_agentcoder_slotcopy_gate.py tests/test_agentcoder_keyvalue_copy_generator.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+rm -rf work/valueonly_smoke && python3 scripts/make_agentcoder_keyvalue_copy_sft.py --train-output work/valueonly_smoke/train.jsonl --cases-output work/valueonly_smoke/cases.json --manifest-output work/valueonly_smoke/manifest.json --completion-mode value_only --eval-mode coverage_ladder --train-records 12 --train-variants-per-row 3 --eval-cases 4
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_atomic_cardinality_sweep.py tests/test_agentcoder_atomic_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+python3 -m py_compile scripts/run_agentcoder_keyvalue_copy_gate.py scripts/make_agentcoder_keyvalue_copy_sft.py
+python3 scripts/run_agentcoder_keyvalue_copy_gate.py --help | grep 'value_only'
+python3 -m py_compile scripts/eval_overfit_sanity.py
+python3 -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_slotcopy_generator.py
+git diff --check
+```
+
+Results:
+
+- focused key-value/slotcopy tests: `16 passed`
+- related generator bundle: `40 passed`
+- value-only smoke manifest: 12 base train rows, 3 variants per row, 36 train
+  records, `completion_mode: value_only`, and 12 eval cases split evenly across
+  `seen_slot`, `covered_value_slot`, and `heldout_slot`
+- runner help now accepts `value_only`
+- `git diff --check` passed
+
+Remote Vast RTX 5090 validation:
+
+```bash
+/venv/main/bin/python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_agentcoder_pipeline.py -k 'keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards'
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/raam \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --max-new-tokens 48 \
+  --clean --no-fail
+/venv/main/bin/python scripts/eval_overfit_sanity.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml \
+  --tokenizer /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/raam/tokenizer.json \
+  --checkpoint /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/raam/train/checkpoints/last.pt \
+  --device cuda \
+  --cases-json /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/raam/generated/keyvalue_eval_cases.json \
+  --output /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/raam/keyvalue_eval_cleanseq.json \
+  --max-new-tokens 48 --min-pass-rate 1.0 --no-fail
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml \
+  --output-dir /root/raam-lm/runs/agentcoder_valueonly_variant4_compare_20260703T112451Z/transformer \
+  --device cuda --seed 29 --train-records 96 --train-variants-per-row 4 \
+  --eval-cases 32 --steps 1600 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --max-new-tokens 48 \
+  --clean --no-fail
+```
+
+Remote focused tests: `27 passed, 8 deselected`.
+
+One failed command was hit and fixed: the first eval-only RAAM re-score assigned
+`RUN_ID=...` in the same shell command where `$RUN_ID` appeared in arguments, so
+the shell expanded it empty and the tokenizer path became
+`/root/raam-lm/runs/raam/tokenizer.json`. The rerun above used the explicit path
+and succeeded.
+
+Value-only coverage ladder results:
+
+| Model | Exact Pass | Seen Pass | Covered-Value Pass | Held-Out/OOV Pass | Value Sequence Accuracy | Behavior Accuracy | Val Loss | Tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM value-only | 9 / 96 | 9 / 32 | 0 / 32 | 0 / 32 | 9 / 96 | 89 / 96 | 1.167214 | 25464.9 |
+| Transformer value-only | 2 / 96 | 2 / 32 | 0 / 32 | 0 / 32 | 2 / 96 | 96 / 96 | 1.406007 | 27498.7 |
+
+The RAAM result above uses the cleaned eval file
+`raam/keyvalue_eval_cleanseq.json`; the original RAAM `summary.json` was produced
+before `c66648d` and still includes a stale key-sequence labeled count for this
+value-only run. The cleaned eval reports `key_sequence_labeled_cases: 0` and
+`value_sequence_labeled_cases: 96`.
+
+Representative completions:
+
+- RAAM passing seen sample: expected `case_module_004`, `allowed_setting_004`,
+  `copy_fixture_004.py`; generated the exact same three values.
+- RAAM covered-value sample: expected `enabled_setting_000`, `case_parser_000`,
+  `copy_service_000`; generated the seen-row values `copy_service_000`,
+  `copy_file_000.py`, `copy_fixture_000.py`.
+- RAAM held-out/OOV sample: expected `case_adapter_096`, `copy_file_096.py`,
+  `copy_service_096`; generated `e.py`, `e.py`.
+- Transformer passing seen sample: expected `disabled_file_001`,
+  `case_setting_001`, `copy_symbol_001.py`; generated the exact same three
+  values.
+- Transformer held-out/OOV sample: expected `case_adapter_096`,
+  `copy_file_096.py`, `copy_service_096`; generated `e`, `e`, `e`.
+
+Local artifact pull:
+
+- `/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_valueonly_variant4_compare_20260703T112451Z`
+
+Checkpoint weights were not pulled.
+
+Interpretation: RAAM has a small advantage over the matched Transformer on exact
+seen value retrieval under this tiny schedule, but neither model has learned
+covered-value recombination or held-out value continuation. Together with the
+key-only result, the current bottleneck is no longer requested-key selection; it
+is value span retrieval/copying. The next highest-value experiment is a
+span-copy/objective change for values, such as explicit pointer-style value-copy
+targets, value-boundary sentinel tokens, or a curriculum that first copies one
+requested value before scaling back to three-value ordered outputs.
+
 ## AgentCoder Assistant-Only Atomic Mask Gate
 
 Added assistant-only SFT loss masking for structured JSONL packing and training:
