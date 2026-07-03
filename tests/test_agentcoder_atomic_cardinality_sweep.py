@@ -98,3 +98,17 @@ def test_raam_atomic_anchor_attention_config_enables_exact_route():
     assert payload["attention_island_layers"] == [1, 2]
     assert payload["compression"]["enabled"] is True
     assert payload["compression"]["anchors_per_block"] == 4
+
+
+def test_raam_atomic_all_anchor_attention_config_preserves_whole_block():
+    config_path = Path("configs/scratch/raam_agentcoder_atomic_all_anchor_attention_gate.yaml")
+    payload = yaml.safe_load(config_path.read_text())
+
+    assert payload["model_name"] == "raam"
+    assert payload["use_dynamic_hourglass_compression"] is True
+    assert payload["use_anchor_preserved_local_global"] is True
+    assert payload["use_attention_islands"] is True
+    assert payload["attention_island_layers"] == [1, 2]
+    assert payload["compression"]["enabled"] is True
+    assert payload["compression"]["block_size"] == 8
+    assert payload["compression"]["anchors_per_block"] == payload["compression"]["block_size"]
