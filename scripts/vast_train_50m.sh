@@ -21,6 +21,23 @@ GRAD_ACCUMULATION_STEPS="${GRAD_ACCUMULATION_STEPS:-}"
 EVAL_BATCHES="${EVAL_BATCHES:-}"
 VOCAB_SIZE="${VOCAB_SIZE:-32768}"
 SEQ_LEN="${SEQ_LEN:-2048}"
+ASSISTANT_LOSS_ONLY="${ASSISTANT_LOSS_ONLY:-0}"
+AGENT_RECORDS_ONLY="${AGENT_RECORDS_ONLY:-0}"
+SCORE_PLAIN_TEXT_LOSS="${SCORE_PLAIN_TEXT_LOSS:-1}"
+MAX_PACK_DOCUMENTS="${MAX_PACK_DOCUMENTS:-0}"
+MAX_PACK_DOCUMENT_CHARS="${MAX_PACK_DOCUMENT_CHARS:-0}"
+SAVE_BEST="${SAVE_BEST:-}"
+EARLY_STOP_PATIENCE_EVALS="${EARLY_STOP_PATIENCE_EVALS:-}"
+EARLY_STOP_MIN_DELTA="${EARLY_STOP_MIN_DELTA:-}"
+EARLY_STOP_MIN_STEP="${EARLY_STOP_MIN_STEP:-}"
+RESTORE_BEST_ON_FINISH="${RESTORE_BEST_ON_FINISH:-}"
+VALIDATION_LR_DECAY_PATIENCE_EVALS="${VALIDATION_LR_DECAY_PATIENCE_EVALS:-}"
+VALIDATION_LR_DECAY_FACTOR="${VALIDATION_LR_DECAY_FACTOR:-}"
+VALIDATION_LR_DECAY_MIN_SCALE="${VALIDATION_LR_DECAY_MIN_SCALE:-}"
+VALIDATION_LR_DECAY_MIN_STEP="${VALIDATION_LR_DECAY_MIN_STEP:-}"
+USE_BEST_CHECKPOINT_FOR_EVAL="${USE_BEST_CHECKPOINT_FOR_EVAL:-1}"
+RUN_QUALITATIVE_INSPECT="${RUN_QUALITATIVE_INSPECT:-0}"
+QUALITATIVE_SEEDS="${QUALITATIVE_SEEDS:-17}"
 EXPORT_CHECKPOINT="${EXPORT_CHECKPOINT:-1}"
 KEEP_TRAINING_CHECKPOINTS="${KEEP_TRAINING_CHECKPOINTS:-1}"
 
@@ -66,12 +83,59 @@ if [[ ! -f "$TOKENIZER" ]]; then
   python scripts/train_tokenizer.py "$RAW_DIR" --output "$TOKENIZER" --vocab-size "$VOCAB_SIZE"
 fi
 
+pack_args=()
+if [[ "$ASSISTANT_LOSS_ONLY" == "1" ]]; then
+  pack_args+=(--assistant-loss-only)
+fi
+if [[ "$AGENT_RECORDS_ONLY" == "1" ]]; then
+  pack_args+=(--agent-records-only)
+fi
+if [[ "$SCORE_PLAIN_TEXT_LOSS" == "0" ]]; then
+  pack_args+=(--no-score-plain-text-loss)
+fi
+if (( MAX_PACK_DOCUMENTS > 0 )); then
+  pack_args+=(--max-documents "$MAX_PACK_DOCUMENTS")
+fi
+if (( MAX_PACK_DOCUMENT_CHARS > 0 )); then
+  pack_args+=(--max-document-chars "$MAX_PACK_DOCUMENT_CHARS")
+fi
+
+needs_pack=0
 if [[ ! -f "$PACKED_DIR/train.bin" || ! -f "$PACKED_DIR/val.bin" ]]; then
+  needs_pack=1
+elif [[ "$ASSISTANT_LOSS_ONLY" == "1" && ( ! -f "$PACKED_DIR/train_loss_mask.bin" || ! -f "$PACKED_DIR/val_loss_mask.bin" ) ]]; then
+  needs_pack=1
+fi
+if [[ "$needs_pack" == "0" && ! -f "$PACKED_DIR/manifest.json" ]]; then
+  needs_pack=1
+fi
+if [[ "$needs_pack" == "0" && -f "$PACKED_DIR/manifest.json" ]]; then
+  if ! python - "$PACKED_DIR/manifest.json" "$ASSISTANT_LOSS_ONLY" "$AGENT_RECORDS_ONLY" "$SCORE_PLAIN_TEXT_LOSS" "$MAX_PACK_DOCUMENTS" "$MAX_PACK_DOCUMENT_CHARS" <<'PY'
+import json
+import sys
+
+manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
+expected = {
+    "assistant_loss_only": sys.argv[2] == "1",
+    "agent_records_only": sys.argv[3] == "1",
+    "score_plain_text_loss": sys.argv[4] != "0",
+    "max_documents": int(sys.argv[5]),
+    "max_document_chars": int(sys.argv[6]),
+}
+raise SystemExit(0 if all(manifest.get(key) == value for key, value in expected.items()) else 1)
+PY
+  then
+    needs_pack=1
+  fi
+fi
+
+if [[ "$needs_pack" == "1" ]]; then
   python scripts/pack_dataset.py "$RAW_DIR" \
     --tokenizer "$TOKENIZER" \
     --output-dir "$PACKED_DIR" \
     --seq-len "$SEQ_LEN" \
-    --val-fraction 0.02
+    --val-fraction 0.02 \
+    "${pack_args[@]}"
 fi
 
 sync_args=()
@@ -95,6 +159,37 @@ if [[ -n "$GRAD_ACCUMULATION_STEPS" ]]; then
 fi
 if [[ -n "$EVAL_BATCHES" ]]; then
   train_overrides+=(--eval-batches "$EVAL_BATCHES")
+fi
+if [[ "$SAVE_BEST" == "1" ]]; then
+  train_overrides+=(--save-best)
+elif [[ "$SAVE_BEST" == "0" ]]; then
+  train_overrides+=(--no-save-best)
+fi
+if [[ -n "$EARLY_STOP_PATIENCE_EVALS" ]]; then
+  train_overrides+=(--early-stop-patience-evals "$EARLY_STOP_PATIENCE_EVALS")
+fi
+if [[ -n "$EARLY_STOP_MIN_DELTA" ]]; then
+  train_overrides+=(--early-stop-min-delta "$EARLY_STOP_MIN_DELTA")
+fi
+if [[ -n "$EARLY_STOP_MIN_STEP" ]]; then
+  train_overrides+=(--early-stop-min-step "$EARLY_STOP_MIN_STEP")
+fi
+if [[ "$RESTORE_BEST_ON_FINISH" == "1" ]]; then
+  train_overrides+=(--restore-best-on-finish)
+elif [[ "$RESTORE_BEST_ON_FINISH" == "0" ]]; then
+  train_overrides+=(--no-restore-best-on-finish)
+fi
+if [[ -n "$VALIDATION_LR_DECAY_PATIENCE_EVALS" ]]; then
+  train_overrides+=(--validation-lr-decay-patience-evals "$VALIDATION_LR_DECAY_PATIENCE_EVALS")
+fi
+if [[ -n "$VALIDATION_LR_DECAY_FACTOR" ]]; then
+  train_overrides+=(--validation-lr-decay-factor "$VALIDATION_LR_DECAY_FACTOR")
+fi
+if [[ -n "$VALIDATION_LR_DECAY_MIN_SCALE" ]]; then
+  train_overrides+=(--validation-lr-decay-min-scale "$VALIDATION_LR_DECAY_MIN_SCALE")
+fi
+if [[ -n "$VALIDATION_LR_DECAY_MIN_STEP" ]]; then
+  train_overrides+=(--validation-lr-decay-min-step "$VALIDATION_LR_DECAY_MIN_STEP")
 fi
 
 python scripts/train.py \
@@ -127,10 +222,16 @@ if (( RESUME_STEPS > STEPS )); then
     "${sync_args[@]}"
 fi
 
+POST_TRAIN_CHECKPOINT="$RUN_DIR/checkpoints/last.pt"
+if [[ "$USE_BEST_CHECKPOINT_FOR_EVAL" == "1" && -f "$RUN_DIR/checkpoints/best.pt" ]]; then
+  POST_TRAIN_CHECKPOINT="$RUN_DIR/checkpoints/best.pt"
+fi
+printf 'post_train_checkpoint path=%s\n' "$POST_TRAIN_CHECKPOINT"
+
 python scripts/generate.py \
   --config "$CONFIG" \
   --tokenizer "$TOKENIZER" \
-  --checkpoint "$RUN_DIR/checkpoints/last.pt" \
+  --checkpoint "$POST_TRAIN_CHECKPOINT" \
   --prompt $'<|user|>\nFix this failing unit test.\n<|assistant|>\n' \
   --device cuda \
   --max-new-tokens 64 \
@@ -139,15 +240,29 @@ python scripts/generate.py \
 python scripts/eval_agentic_coding.py \
   --config "$CONFIG" \
   --tokenizer "$TOKENIZER" \
-  --checkpoint "$RUN_DIR/checkpoints/last.pt" \
+  --checkpoint "$POST_TRAIN_CHECKPOINT" \
   --device cuda \
   --output "$RUN_DIR/agentic_eval.json"
 
+if [[ "$RUN_QUALITATIVE_INSPECT" == "1" ]]; then
+  python scripts/qualitative_checkpoint_inspect.py \
+    --config "$CONFIG" \
+    --tokenizer "$TOKENIZER" \
+    --checkpoint "$POST_TRAIN_CHECKPOINT" \
+    --device cuda \
+    --seeds "$QUALITATIVE_SEEDS" \
+    --output-json "$RUN_DIR/qualitative_samples.json" \
+    --output-md "$RUN_DIR/qualitative_samples.md"
+fi
+
 if [[ "$EXPORT_CHECKPOINT" == "1" ]]; then
   python scripts/export_checkpoint.py \
-    --checkpoint "$RUN_DIR/checkpoints/last.pt" \
+    --checkpoint "$POST_TRAIN_CHECKPOINT" \
     --output "$RUN_DIR/checkpoints/model_only_fp16.pt" \
     --dtype fp16
+  if [[ "$POST_TRAIN_CHECKPOINT" == "$RUN_DIR/checkpoints/best.pt" ]]; then
+    cp "$RUN_DIR/checkpoints/model_only_fp16.pt" "$RUN_DIR/checkpoints/model_only_best_fp16.pt"
+  fi
 fi
 
 if [[ "$KEEP_TRAINING_CHECKPOINTS" != "1" ]]; then

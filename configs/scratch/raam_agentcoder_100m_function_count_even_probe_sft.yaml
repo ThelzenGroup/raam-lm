@@ -1,0 +1,72 @@
+model_name: raam
+vocab_size: 32768
+max_seq_len: 2048
+d_model: 512
+n_layers: 14
+n_heads: 8
+n_kv_heads: 8
+d_ff: 2048
+dropout: 0.0
+rope_base: 10000
+tie_embeddings: true
+mixer_backend: auto
+attention_island_layers: []
+use_mamba_or_fallback_backbone: true
+use_dynamic_hourglass_compression: true
+use_anchor_preserved_local_global: false
+use_attention_islands: false
+use_curriculum_mtp: false
+compression:
+  enabled: true
+  block_size: 16
+  anchors_per_block: 0
+  pooled_chunks_per_block: 1
+  delayed_chunk_context: true
+  anchor_score_hidden: 256
+  recon_loss_weight: 0.0
+  recon_loss_start_step: 100000000
+  recon_loss_ramp_steps: 5000
+mtp:
+  enabled: false
+  max_horizon: 4
+  enabled_horizons: []
+  horizon_weights: {}
+  start_step: 100000000
+  horizon2_step: 100000000
+  horizon3_step: 100000000
+  horizon4_step: 100000000
+  ramp_steps: 5000
+train:
+  seed: 37
+  batch_size: 8
+  seq_len: 512
+  steps: 3025
+  lr: 0.0001
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  gradient_accumulation_steps: 4
+  warmup_steps: 0
+  cosine_decay: true
+  lr_decay_start_step: 2825
+  lr_decay_end_step: 3025
+  min_lr: 0.00001
+  device: auto
+  dtype: auto
+  log_every: 10
+  eval_every: 25
+  save_every: 50
+  save_best: true
+  early_stop_patience_evals: 0
+  early_stop_min_delta: 0.0
+  early_stop_min_step: 100000000
+  restore_best_on_finish: false
+  validation_lr_decay_patience_evals: 0
+  validation_lr_decay_factor: 0.5
+  validation_lr_decay_min_scale: 0.25
+  validation_lr_decay_min_step: 100000000
+  output_dir: runs/raam_agentcoder_100m_function_count_even_probe_sft
+eval:
+  eval_batches: 8
+  probe_lengths: [256, 512]
+  long_context_lengths: [512, 1024, 2048]

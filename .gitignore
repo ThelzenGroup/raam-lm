@@ -19,6 +19,7 @@ env/
 # Training outputs and heavyweight artifacts
 runs/
 wandb/
+.mlops/
 checkpoints/
 *.pt
 *.pth

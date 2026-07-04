@@ -58,7 +58,7 @@ pull_once() {
     remote_base="$(basename "$REMOTE_RUN_DIR")"
     if [[ "$INCLUDE_CHECKPOINTS" != "1" ]]; then
       if [[ "$INCLUDE_MODEL_EXPORT" == "1" ]]; then
-        tar_exclude="--exclude='$remote_base/checkpoints/last.pt' --exclude='$remote_base/checkpoints/step_*.pt' --exclude='$remote_base/*/checkpoints/last.pt' --exclude='$remote_base/*/checkpoints/step_*.pt' --exclude='$remote_base/*/*/checkpoints/last.pt' --exclude='$remote_base/*/*/checkpoints/step_*.pt'"
+        tar_exclude="--exclude='$remote_base/checkpoints/last.pt' --exclude='$remote_base/checkpoints/best.pt' --exclude='$remote_base/checkpoints/step_*.pt' --exclude='$remote_base/*/checkpoints/last.pt' --exclude='$remote_base/*/checkpoints/best.pt' --exclude='$remote_base/*/checkpoints/step_*.pt' --exclude='$remote_base/*/*/checkpoints/last.pt' --exclude='$remote_base/*/*/checkpoints/best.pt' --exclude='$remote_base/*/*/checkpoints/step_*.pt'"
       else
         tar_exclude="--exclude='$remote_base/checkpoints/*.pt' --exclude='$remote_base/checkpoints/*.safetensors' --exclude='$remote_base/*/checkpoints/*.pt' --exclude='$remote_base/*/checkpoints/*.safetensors' --exclude='$remote_base/*/*/checkpoints/*.pt' --exclude='$remote_base/*/*/checkpoints/*.safetensors'"
       fi

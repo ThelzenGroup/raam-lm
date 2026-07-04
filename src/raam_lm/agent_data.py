@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import random
 import struct
+from array import array
 from typing import Any, Iterable
 
 import torch
@@ -32,6 +33,17 @@ TEXT_EXTENSIONS = {
 }
 
 ASSISTANT_LOSS_ROLES = {"assistant", "patch", "tool", "final"}
+
+
+def is_structured_agent_record(record: dict[str, Any]) -> bool:
+    if "text" in record:
+        return False
+    return any(key in record for key in ("messages", "trace", "final", "repo_context", "system"))
+
+
+def is_structured_agent_doc(doc: dict[str, Any]) -> bool:
+    record = doc.get("record")
+    return isinstance(record, dict) and is_structured_agent_record(record)
 
 
 def stable_hash_text(text: str) -> str:
@@ -198,8 +210,12 @@ def write_int32_tokens(path: str | Path, tokens: list[int]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fh:
-        for token in tokens:
-            fh.write(struct.pack("<i", int(token)))
+        array("i", [int(token) for token in tokens]).tofile(fh)
+
+
+def append_int32_tokens(fh, tokens: list[int]) -> None:
+    if tokens:
+        array("i", [int(token) for token in tokens]).tofile(fh)
 
 
 def read_int32_tokens(path: str | Path) -> torch.Tensor:
@@ -217,10 +233,37 @@ def pack_documents(
     seed: int = 17,
     mirror_val: bool = False,
     assistant_loss_only: bool = False,
+    agent_records_only: bool = False,
+    score_plain_text_loss: bool = True,
+    max_documents: int = 0,
+    max_document_chars: int = 0,
 ) -> dict[str, Any]:
     docs = load_documents(input_paths)
+    source_type_counts = {
+        "agent_records": sum(1 for doc in docs if is_structured_agent_doc(doc)),
+        "plain_text": sum(1 for doc in docs if not is_structured_agent_doc(doc)),
+    }
+    if agent_records_only:
+        docs = [doc for doc in docs if is_structured_agent_doc(doc)]
+        if not docs:
+            raise ValueError("agent_records_only requested, but no structured JSONL agent records were found")
+    skipped_long_documents = 0
+    if max_document_chars > 0:
+        before = len(docs)
+        docs = [doc for doc in docs if len(doc["text"]) <= max_document_chars]
+        skipped_long_documents = before - len(docs)
+        if not docs:
+            raise ValueError(f"max_document_chars={max_document_chars} filtered out every document")
     rng = random.Random(seed)
     rng.shuffle(docs)
+    selected_before_cap = len(docs)
+    if max_documents > 0 and len(docs) > max_documents:
+        docs = docs[:max_documents]
+    capped_documents = selected_before_cap - len(docs)
+    selected_source_type_counts = {
+        "agent_records": sum(1 for doc in docs if is_structured_agent_doc(doc)),
+        "plain_text": sum(1 for doc in docs if not is_structured_agent_doc(doc)),
+    }
     if mirror_val:
         train_docs = docs
         val_docs = docs
@@ -229,11 +272,18 @@ def pack_documents(
         val_docs = docs[:val_count]
         train_docs = docs[val_count:] or docs[:]
 
-    def encode_docs(items: list[dict[str, Any]]) -> tuple[list[int], list[int]]:
-        tokens: list[int] = []
-        loss_mask: list[int] = []
+    def write_encoded_docs(
+        items: list[dict[str, Any]],
+        token_path: Path,
+        mask_path: Path | None,
+    ) -> tuple[int, int]:
+        token_count = 0
+        loss_token_count = 0
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_fh = token_path.open("wb")
+        mask_fh = mask_path.open("wb") if mask_path is not None else None
         for item in items:
-            if assistant_loss_only and "record" in item:
+            if assistant_loss_only and is_structured_agent_doc(item):
                 item_tokens, item_mask = encode_agent_record_with_loss_mask(
                     item["record"],
                     tokenizer,
@@ -242,35 +292,55 @@ def pack_documents(
                 )
             else:
                 item_tokens = tokenizer.encode(item["text"], add_bos=True, add_eos=True)
-                item_mask = [1] * len(item_tokens)
+                score_plain_text = not assistant_loss_only or score_plain_text_loss
+                item_mask = [1 if score_plain_text else 0] * len(item_tokens)
                 if item_mask:
                     item_mask[0] = 0
-            tokens.extend(item_tokens)
-            loss_mask.extend(item_mask)
-        return tokens, loss_mask
+            append_int32_tokens(token_fh, item_tokens)
+            token_count += len(item_tokens)
+            if mask_fh is not None:
+                append_int32_tokens(mask_fh, item_mask)
+                loss_token_count += int(sum(item_mask))
+        token_fh.close()
+        if mask_fh is not None:
+            mask_fh.close()
+        return token_count, loss_token_count
 
-    train_tokens, train_loss_mask = encode_docs(train_docs)
-    val_tokens, val_loss_mask = encode_docs(val_docs)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    write_int32_tokens(output_dir / "train.bin", train_tokens)
-    write_int32_tokens(output_dir / "val.bin", val_tokens)
-    if assistant_loss_only:
-        write_int32_tokens(output_dir / "train_loss_mask.bin", train_loss_mask)
-        write_int32_tokens(output_dir / "val_loss_mask.bin", val_loss_mask)
+    train_mask_path = output_dir / "train_loss_mask.bin" if assistant_loss_only else None
+    val_mask_path = output_dir / "val_loss_mask.bin" if assistant_loss_only else None
+    train_token_count, train_loss_token_count = write_encoded_docs(
+        train_docs,
+        output_dir / "train.bin",
+        train_mask_path,
+    )
+    val_token_count, val_loss_token_count = write_encoded_docs(
+        val_docs,
+        output_dir / "val.bin",
+        val_mask_path,
+    )
     manifest = {
         "seq_len": seq_len,
         "seed": seed,
         "val_fraction": val_fraction,
         "tokenizer_vocab_size": tokenizer.vocab_size,
-        "train_tokens": len(train_tokens),
-        "val_tokens": len(val_tokens),
+        "train_tokens": train_token_count,
+        "val_tokens": val_token_count,
         "train_docs": len(train_docs),
         "val_docs": len(val_docs),
         "mirror_val": mirror_val,
         "assistant_loss_only": assistant_loss_only,
-        "train_loss_tokens": int(sum(train_loss_mask)) if assistant_loss_only else None,
-        "val_loss_tokens": int(sum(val_loss_mask)) if assistant_loss_only else None,
+        "agent_records_only": agent_records_only,
+        "score_plain_text_loss": score_plain_text_loss,
+        "source_type_counts": source_type_counts,
+        "selected_source_type_counts": selected_source_type_counts,
+        "max_documents": max_documents,
+        "max_document_chars": max_document_chars,
+        "skipped_long_documents": skipped_long_documents,
+        "capped_documents": capped_documents,
+        "train_loss_tokens": train_loss_token_count if assistant_loss_only else None,
+        "val_loss_tokens": val_loss_token_count if assistant_loss_only else None,
         "documents": [{"source": doc["source"], "hash": doc["hash"]} for doc in docs],
         "format": "int32-token-stream-v1",
     }

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import torch
 
-from raam_lm.config import config_hash, load_config, to_dict
+from raam_lm.config import config_hash, load_config, resolve_copy_head_token_ids, to_dict
 from raam_lm.registry import build_model
 from raam_lm.tokenization import AgentCoderTokenizer
 from raam_lm.train_utils import resolve_device, seed_all
@@ -23,6 +23,7 @@ DEFAULT_PROMPTS = [
     {
         "name": "plain_chat_debugging",
         "category": "chat",
+        "required_any_substrings": [["reproduce", "rerun"], ["assertion", "failure", "traceback"], ["small", "minimal"]],
         "prompt": (
             "<|user|>\n"
             "A Python unit test is failing. Explain in plain English how you would debug it before editing code.\n"
@@ -32,6 +33,8 @@ DEFAULT_PROMPTS = [
     {
         "name": "clarifying_question",
         "category": "chat",
+        "required_substrings": ["?"],
+        "required_any_substrings": [["file", "test", "rollback", "risk"]],
         "prompt": (
             "<|user|>\n"
             "Before changing a risky production file, ask one concise clarifying question.\n"
@@ -41,6 +44,7 @@ DEFAULT_PROMPTS = [
     {
         "name": "function_completion",
         "category": "coding",
+        "required_substrings": ["def is_even", "return n % 2 == 0"],
         "prompt": (
             "<|user|>\n"
             "Complete this Python function:\n"
@@ -53,6 +57,8 @@ DEFAULT_PROMPTS = [
     {
         "name": "bug_fix_patch",
         "category": "coding",
+        "required_substrings": ["return a + b"],
+        "requires_diff": True,
         "prompt": (
             "<|user|>\n"
             "Fix the bug and provide a minimal patch:\n"
@@ -66,6 +72,7 @@ DEFAULT_PROMPTS = [
     {
         "name": "test_command",
         "category": "software_engineering",
+        "required_substrings": ["pytest"],
         "prompt": (
             "<|user|>\n"
             "You changed a Python package. Name the safest test command to run before committing.\n"
@@ -75,6 +82,8 @@ DEFAULT_PROMPTS = [
     {
         "name": "stack_trace",
         "category": "software_engineering",
+        "required_substrings": ["int"],
+        "required_any_substrings": [["validate", "check", "guard"]],
         "prompt": (
             "<|user|>\n"
             "Diagnose this stack trace:\n"
@@ -85,6 +94,7 @@ DEFAULT_PROMPTS = [
     {
         "name": "repo_context",
         "category": "agentic_coding",
+        "required_substrings": ["calc.py"],
         "prompt": (
             "<|repo_context|>\n"
             "file: app.py\n"
@@ -105,6 +115,8 @@ DEFAULT_PROMPTS = [
     {
         "name": "json_tool_call",
         "category": "agentic_coding",
+        "required_substrings": ["*.py"],
+        "requires_json": True,
         "prompt": (
             "<|user|>\n"
             "Return one JSON object with a shell command that lists Python files.\n"
@@ -125,7 +137,7 @@ def parse_seed_list(raw: str) -> list[int]:
     return seeds
 
 
-def load_prompts(path: str | None) -> list[dict[str, str]]:
+def load_prompts(path: str | None) -> list[dict[str, Any]]:
     if path is None:
         return DEFAULT_PROMPTS
     payload = json.loads(Path(path).read_text())
@@ -135,13 +147,11 @@ def load_prompts(path: str | None) -> list[dict[str, str]]:
     for index, item in enumerate(payload):
         if not isinstance(item, dict) or "prompt" not in item:
             raise ValueError(f"prompt entry {index} must be an object with a prompt field")
-        prompts.append(
-            {
-                "name": str(item.get("name", f"prompt_{index:02d}")),
-                "category": str(item.get("category", "custom")),
-                "prompt": str(item["prompt"]),
-            }
-        )
+        prompt_item = dict(item)
+        prompt_item["name"] = str(item.get("name", f"prompt_{index:02d}"))
+        prompt_item["category"] = str(item.get("category", "custom"))
+        prompt_item["prompt"] = str(item["prompt"])
+        prompts.append(prompt_item)
     if not prompts:
         raise ValueError("prompt file did not contain any prompts")
     return prompts
@@ -193,6 +203,23 @@ def lexical_flags(text: str) -> dict[str, Any]:
     }
 
 
+def usefulness_checks(prompt: dict[str, Any], text: str, flags: dict[str, Any]) -> dict[str, bool]:
+    lowered = text.lower()
+    checks: dict[str, bool] = {"has_text": flags["non_whitespace_chars"] >= 12}
+    for required in prompt.get("required_substrings", []):
+        checks[f"contains:{required}"] = str(required).lower() in lowered
+    for index, options in enumerate(prompt.get("required_any_substrings", [])):
+        option_values = [str(option).lower() for option in options]
+        checks[f"contains_any:{index}"] = any(option in lowered for option in option_values)
+    if prompt.get("requires_json"):
+        checks["valid_json"] = bool(flags["contains_json_object"])
+    if prompt.get("requires_diff"):
+        checks["diff_marker"] = bool(flags["contains_diff_marker"])
+    if prompt.get("requires_test_command"):
+        checks["test_command"] = bool(flags["mentions_test_command"])
+    return checks
+
+
 def sample_next_token(logits: torch.Tensor, temperature: float, top_k: int) -> int:
     if temperature <= 0.0:
         return int(torch.argmax(logits).item())
@@ -219,6 +246,7 @@ def generate_one(
     prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
     ids = list(prompt_ids)
     generated_ids: list[int] = []
+    suppressed_token_ids = tokenizer.generation_suppressed_token_ids()
     eos_generated = False
     start = time.perf_counter()
     with torch.no_grad():
@@ -226,6 +254,8 @@ def generate_one(
             context = ids[-max_seq_len:]
             input_ids = torch.tensor([context], device=device, dtype=torch.long)
             logits = model(input_ids)["logits"][0, -1]
+            if suppressed_token_ids:
+                logits[suppressed_token_ids] = -1.0e9
             next_id = sample_next_token(logits, temperature=temperature, top_k=top_k)
             ids.append(next_id)
             generated_ids.append(next_id)
@@ -282,7 +312,9 @@ def write_markdown(payload: dict[str, Any], path: Path) -> None:
                 f"- generated tokens: `{result['generated_tokens']}`",
                 f"- tokens/sec: `{result['tokens_per_sec']:.2f}`",
                 f"- eos generated: `{result['eos_generated']}`",
+                f"- useful: `{result['useful']}`",
                 f"- lexical flags: `{json.dumps(result['flags'], sort_keys=True)}`",
+                f"- usefulness checks: `{json.dumps(result['usefulness_checks'], sort_keys=True)}`",
                 "",
                 "**Prompt**",
                 "",
@@ -319,6 +351,7 @@ def main() -> None:
     tokenizer = AgentCoderTokenizer.load(args.tokenizer)
     config = load_config(args.config)
     config.vocab_size = tokenizer.vocab_size
+    resolve_copy_head_token_ids(config, tokenizer)
 
     seed_all(seeds[0])
     model = build_model(config)
@@ -341,6 +374,8 @@ def main() -> None:
                 top_k=args.top_k,
             )
             completion = sample["completion"]
+            flags = lexical_flags(completion)
+            checks = usefulness_checks(item, completion, flags)
             results.append(
                 {
                     "prompt_name": item["name"],
@@ -348,7 +383,9 @@ def main() -> None:
                     "seed": seed,
                     "prompt": item["prompt"],
                     **sample,
-                    "flags": lexical_flags(completion),
+                    "flags": flags,
+                    "usefulness_checks": checks,
+                    "useful": all(checks.values()),
                 }
             )
 
@@ -374,6 +411,8 @@ def main() -> None:
         "seeds": seeds,
         "prompt_count": len(prompts),
         "sample_count": len(results),
+        "useful_count": sum(1 for result in results if result["useful"]),
+        "useful_rate": sum(1 for result in results if result["useful"]) / max(len(results), 1),
     }
     payload = {
         "metadata": metadata,

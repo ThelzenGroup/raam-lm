@@ -140,6 +140,15 @@ class AgentCoderTokenizer:
         flush_bytes()
         return "".join(parts)
 
+    def generation_suppressed_token_ids(self) -> list[int]:
+        """Special/control ids that should not be sampled inside assistant text."""
+
+        return [
+            self.vocab[token]
+            for token in self.special_tokens
+            if token != "<eos>" and token in self.vocab
+        ]
+
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

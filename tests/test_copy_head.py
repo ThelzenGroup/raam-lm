@@ -187,6 +187,7 @@ def test_causal_copy_head_request_key_follow_prefers_requested_value_before_assi
         request_key_follow_after_token_id=5,
         request_key_follow_before_token_id=6,
         request_key_follow_value_span=4,
+        request_key_follow_prompt_suffix_tokens=1,
     )
     head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
     zero_copy_projection_weights(head)
@@ -213,6 +214,7 @@ def test_causal_copy_head_request_key_follow_continues_value_prefix():
         request_key_follow_after_token_id=5,
         request_key_follow_before_token_id=6,
         request_key_follow_value_span=4,
+        request_key_follow_prompt_suffix_tokens=1,
     )
     head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
     zero_copy_projection_weights(head)
@@ -357,6 +359,234 @@ def test_causal_copy_head_request_key_follow_emits_eos_at_value_stop():
     assert stop_emit[0, 14, 2] == 1
 
 
+def test_causal_copy_head_request_key_follow_orders_multi_value_stops():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        key_follow_stop_token_ids=[10],
+        request_key_follow_strength=10.0,
+        request_key_follow_continuation_strength=20.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+        request_key_follow_query_after_token_id=8,
+        request_key_follow_query_before_token_ids=[9],
+        request_key_follow_query_ignore_token_ids=[7],
+        request_key_follow_prompt_suffix_tokens=1,
+        request_key_follow_prefix_tokens=2,
+        request_key_follow_stop_strength=30.0,
+        request_key_follow_stop_emit_token_id=2,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    prompt_ids = [31, 7, 7, 201, 10, 32, 7, 7, 202, 10, 5, 99, 8, 31, 7, 32, 9, 6, 10]
+
+    input_ids = torch.tensor([prompt_ids])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    first, _, _ = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert first[0, 18, 3] > 0
+    assert first[0, 18, 8] == 0
+
+    input_ids = torch.tensor([prompt_ids + [201]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, _, stop_emit = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert stop_emit is not None
+    assert stop_emit[0, 19, 10] == 1
+    assert stop_emit[0, 19, 2] == 0
+
+    input_ids = torch.tensor([prompt_ids + [201, 10]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    first, _, _ = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert first[0, 20, 8] > 0
+    assert first[0, 20, 3] == 0
+
+    input_ids = torch.tensor([prompt_ids + [201, 10, 202]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, _, stop_emit = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert stop_emit is not None
+    assert stop_emit[0, 21, 2] == 1
+    assert stop_emit[0, 21, 10] == 0
+
+
+def test_causal_copy_head_request_key_follow_requires_source_separator():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        key_follow_stop_token_ids=[10],
+        request_key_follow_strength=10.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=4,
+        request_key_follow_source_separator_token_id=7,
+        request_key_follow_query_after_token_id=8,
+        request_key_follow_query_before_token_ids=[9],
+        request_key_follow_prompt_suffix_tokens=1,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    input_ids = torch.tensor(
+        [
+            [
+                31,
+                7,
+                99,
+                201,
+                10,
+                32,
+                7,
+                99,
+                230,
+                31,
+                250,
+                251,
+                202,
+                10,
+                5,
+                99,
+                8,
+                31,
+                9,
+                6,
+                10,
+            ]
+        ]
+    )
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    first, _, _ = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert first[0, 20, 3] > 0
+    assert first[0, 20, 12] == 0
+
+
+def test_causal_copy_head_request_key_follow_copies_byte_fallback_offsets():
+    config = CopyHeadConfig(
+        enabled=True,
+        d_copy=4,
+        logit_scale=4.0,
+        key_follow_value_offset=3,
+        key_follow_min_source_gap=2,
+        key_follow_source_until_token_id=5,
+        key_follow_stop_token_ids=[10],
+        request_key_follow_strength=20.0,
+        request_key_follow_continuation_strength=30.0,
+        request_key_follow_recent_tokens=8,
+        request_key_follow_after_token_id=5,
+        request_key_follow_before_token_id=6,
+        request_key_follow_value_span=8,
+        request_key_follow_source_separator_token_id=7,
+        request_key_follow_query_after_token_id=8,
+        request_key_follow_query_before_token_ids=[9],
+        request_key_follow_query_ignore_token_ids=[11],
+        request_key_follow_prompt_suffix_tokens=1,
+        request_key_follow_prefix_tokens=6,
+        request_key_follow_stop_strength=40.0,
+        request_key_follow_stop_emit_token_id=2,
+    )
+    head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
+    zero_copy_projection_weights(head)
+    prompt_ids = [
+        31,
+        7,
+        99,
+        201,
+        202,
+        201,
+        203,
+        10,
+        32,
+        7,
+        99,
+        201,
+        204,
+        10,
+        5,
+        99,
+        8,
+        31,
+        11,
+        32,
+        9,
+        6,
+        10,
+    ]
+
+    input_ids = torch.tensor([prompt_ids + [201]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, continuation, _ = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert continuation[0, 23, 4] > 0
+    assert continuation[0, 23, 6] == 0
+
+    hidden = torch.zeros(1, seq_len, 4)
+    lm_logits = torch.zeros(1, seq_len, 256)
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 23, 202] > out[0, 23, 203]
+    assert out[0, 23, 202] > out[0, 23, 6]
+
+    input_ids = torch.tensor([prompt_ids + [201, 202, 201, 203]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, _, stop_emit = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert stop_emit is not None
+    assert stop_emit[0, 26, 10] == 1
+    assert stop_emit[0, 26, 2] == 0
+
+    input_ids = torch.tensor([prompt_ids + [201, 202, 201, 203, 10]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    first, _, _ = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert first[0, 27, 11] > 0
+    assert first[0, 27, 3] == 0
+
+    hidden = torch.zeros(1, seq_len, 4)
+    lm_logits = torch.zeros(1, seq_len, 256)
+    lm_logits[:, :, 2] = 15.0
+    lm_logits[:, :, 6] = 15.0
+    out = head(hidden, input_ids, lm_logits)
+
+    assert out[0, 27, 201] > out[0, 27, 2]
+    assert out[0, 27, 201] > out[0, 27, 6]
+
+    input_ids = torch.tensor([prompt_ids + [201, 202, 201, 203, 10, 201, 204]])
+    seq_len = input_ids.shape[1]
+    source_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril().unsqueeze(0)
+
+    _, _, stop_emit = head._request_key_follow_probs_by_pos(input_ids, source_mask)
+
+    assert stop_emit is not None
+    assert stop_emit[0, 29, 2] == 1
+    assert stop_emit[0, 29, 10] == 0
+
+
 def test_causal_copy_head_request_key_follow_eval_only_skips_train_route():
     config = CopyHeadConfig(
         enabled=True,
@@ -371,6 +601,7 @@ def test_causal_copy_head_request_key_follow_eval_only_skips_train_route():
         request_key_follow_before_token_id=6,
         request_key_follow_value_span=4,
         request_key_follow_eval_only=True,
+        request_key_follow_prompt_suffix_tokens=1,
     )
     head = CausalCopyHead(d_model=4, vocab_size=256, config=config)
     zero_copy_projection_weights(head)

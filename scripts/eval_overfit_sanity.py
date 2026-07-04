@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import torch
 
-from raam_lm.config import load_config
+from raam_lm.config import load_config, resolve_copy_head_token_ids
 from raam_lm.registry import build_model
 from raam_lm.tokenization import AgentCoderTokenizer
 from raam_lm.train_utils import resolve_device, seed_all
@@ -421,6 +421,7 @@ def generate(
     prompt_ids = tokenizer.encode(prompt, add_bos=True, add_eos=False)
     ids = list(prompt_ids)
     generated: list[int] = []
+    suppressed_token_ids = tokenizer.generation_suppressed_token_ids()
     start = time.perf_counter()
     eos_generated = False
     with torch.no_grad():
@@ -428,6 +429,8 @@ def generate(
             context = ids[-max_seq_len:]
             input_ids = torch.tensor([context], device=device, dtype=torch.long)
             logits = model(input_ids)["logits"][0, -1]
+            if suppressed_token_ids:
+                logits[suppressed_token_ids] = -1.0e9
             next_id = sample_next_token(logits, temperature=temperature, top_k=top_k)
             ids.append(next_id)
             generated.append(next_id)
@@ -523,6 +526,7 @@ def main() -> None:
     tokenizer = AgentCoderTokenizer.load(args.tokenizer)
     config = load_config(args.config)
     config.vocab_size = tokenizer.vocab_size
+    resolve_copy_head_token_ids(config, tokenizer)
     model = build_model(config).to(device).eval()
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint["model_state"])
@@ -578,6 +582,7 @@ def main() -> None:
             "temperature": args.temperature,
             "top_k": args.top_k,
             "max_new_tokens": args.max_new_tokens,
+            "suppressed_special_token_ids": tokenizer.generation_suppressed_token_ids(),
             "min_pass_rate": args.min_pass_rate,
             "cases_json": args.cases_json,
         },

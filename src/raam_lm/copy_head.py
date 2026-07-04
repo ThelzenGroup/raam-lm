@@ -249,6 +249,7 @@ class CausalCopyHead(nn.Module):
         request_after_token_id = int(self.config.request_key_follow_after_token_id)
         request_before_token_id = int(self.config.request_key_follow_before_token_id)
         source_after_token_id = int(self.config.request_key_follow_source_after_token_id)
+        source_separator_token_id = int(self.config.request_key_follow_source_separator_token_id)
         query_after_token_id = int(self.config.request_key_follow_query_after_token_id)
         query_before_token_ids = [
             int(token_id) for token_id in self.config.request_key_follow_query_before_token_ids
@@ -338,6 +339,39 @@ class CausalCopyHead(nn.Module):
             request_valid = request_valid & (
                 (last_request_before[:, :, None] - request_pos[None, None, :]) <= recent_tokens
             )
+        # Keep multi-key requests ordered by serving the request token whose rank
+        # matches the number of assistant value separators generated so far.
+        request_rank = request_valid.to(dtype=torch.int64).cumsum(dim=-1) - 1
+        request_count = request_valid.to(dtype=torch.int64).sum(dim=-1)
+        output_stop_mask = (
+            source_stop_mask[:, None, :]
+            & (
+                positions.view(1, 1, seq_len)
+                > (last_request_before[:, :, None] + prompt_suffix_tokens)
+            )
+            & (positions.view(1, 1, seq_len) <= positions.view(1, seq_len, 1))
+        )
+        output_value_index = output_stop_mask.to(dtype=torch.int64).sum(dim=-1)
+        last_output_stop = torch.where(
+            output_stop_mask,
+            positions.view(1, 1, seq_len),
+            torch.full((bsz, seq_len, seq_len), -1, device=input_ids.device, dtype=positions.dtype),
+        ).amax(dim=-1)
+        output_token_mask = (
+            (positions.view(1, 1, seq_len) > last_output_stop[:, :, None])
+            & (
+                positions.view(1, 1, seq_len)
+                > (last_request_before[:, :, None] + prompt_suffix_tokens)
+            )
+            & (positions.view(1, 1, seq_len) <= positions.view(1, seq_len, 1))
+            & ~source_stop_mask[:, None, :]
+        )
+        output_token_index = output_token_mask.to(dtype=torch.int64).sum(dim=-1)
+        request_valid = (
+            request_valid
+            & (request_rank == output_value_index[:, :, None])
+            & (output_value_index[:, :, None] < request_count[:, :, None])
+        )
         request_ids = input_ids
 
         first_follow = torch.zeros(bsz, seq_len, seq_len, device=input_ids.device, dtype=torch.float32)
@@ -357,6 +391,19 @@ class CausalCopyHead(nn.Module):
             key_valid = key_pos >= 0
             clipped_key_pos = key_pos.clamp(0, seq_len - 1)
             key_ids = input_ids[:, clipped_key_pos]
+            source_key_slot_valid = key_valid.unsqueeze(0).expand(bsz, -1)
+            if source_separator_token_id >= 0:
+                separator_pos = (clipped_key_pos + 1).clamp(0, seq_len - 1)
+                separator_in_bounds = (clipped_key_pos + 1) < seq_len
+                separator_ids = input_ids.gather(
+                    dim=1,
+                    index=separator_pos.unsqueeze(0).expand(bsz, -1),
+                )
+                source_key_slot_valid = (
+                    source_key_slot_valid
+                    & separator_in_bounds.unsqueeze(0)
+                    & (separator_ids == source_separator_token_id)
+                )
             key_stop_count = source_stop_prefix[:, clipped_key_pos]
             same_value_segment = source_stop_prefix[:, None, :] == key_stop_count[:, None, :]
             same_value_or_stop_segment = source_stop_prefix_before[:, None, :] == key_stop_count[:, None, :]
@@ -364,6 +411,8 @@ class CausalCopyHead(nn.Module):
             segment_valid = (
                 request_valid[:, :, :, None]
                 & key_valid[None, None, None, :]
+                & source_key_slot_valid[:, None, None, :]
+                & (output_token_index[:, :, None, None] == value_index)
                 & source_region[:, :, None, :]
                 & same_value_segment[:, :, None, :]
             )
@@ -386,6 +435,9 @@ class CausalCopyHead(nn.Module):
                 target_prefix_active = (positions.unsqueeze(0) - prefix_offset) > (
                     last_request_before + prompt_suffix_tokens
                 )
+                target_prefix_active = target_prefix_active & (
+                    target_prefix_pos.unsqueeze(0) > last_output_stop
+                )
                 source_prefix_valid = positions > (prefix_offset + 1)
                 target_prefix_ids = input_ids[:, target_prefix_pos]
                 source_prefix_ids = input_ids[:, source_prefix_pos]
@@ -404,19 +456,34 @@ class CausalCopyHead(nn.Module):
                 stop_valid = (
                     request_valid[:, :, :, None]
                     & key_valid[None, None, None, :]
+                    & source_key_slot_valid[:, None, None, :]
+                    & (output_token_index[:, :, None, None] == value_index)
                     & source_region[:, :, None, :]
                     & source_stop_mask[:, None, None, :]
                     & same_value_or_stop_segment[:, :, None, :]
                 )
-                stop_request_match = (matches & stop_valid).to(dtype=first_follow.dtype).sum(dim=2)
-                stop_active = (stop_request_match * prefix_valid.to(dtype=first_follow.dtype)).sum(
-                    dim=-1,
-                    keepdim=False,
-                ) > 0
+                stop_match = matches & stop_valid & prefix_valid[:, :, None, :]
+                stop_request_active = stop_match.any(dim=-1)
+                request_last_index = request_count[:, :, None] - 1
+                terminal_stop_active = (
+                    stop_request_active & (request_rank == request_last_index)
+                ).any(dim=-1)
                 stop_emit_probs_by_vocab[:, :, stop_emit_token_id] = torch.maximum(
                     stop_emit_probs_by_vocab[:, :, stop_emit_token_id],
-                    stop_active.to(dtype=stop_emit_probs_by_vocab.dtype),
+                    terminal_stop_active.to(dtype=stop_emit_probs_by_vocab.dtype),
                 )
+                nonterminal_stop_match = stop_match & (
+                    request_rank[:, :, :, None] < request_last_index[:, :, :, None]
+                )
+                for token_id in stop_token_ids:
+                    token_stop_active = (
+                        nonterminal_stop_match
+                        & (input_ids[:, None, None, :] == token_id)
+                    ).any(dim=(2, 3))
+                    stop_emit_probs_by_vocab[:, :, token_id] = torch.maximum(
+                        stop_emit_probs_by_vocab[:, :, token_id],
+                        token_stop_active.to(dtype=stop_emit_probs_by_vocab.dtype),
+                    )
 
         has_continuation = continuation_follow.sum(dim=-1, keepdim=True) > 0
         first_follow = torch.where(has_continuation, torch.zeros_like(first_follow), first_follow)

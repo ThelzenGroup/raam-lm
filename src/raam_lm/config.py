@@ -81,6 +81,7 @@ class CopyHeadConfig:
     request_key_follow_value_span: int = 1
     request_key_follow_eval_only: bool = False
     request_key_follow_source_after_token_id: int = -1
+    request_key_follow_source_separator_token_id: int = -1
     request_key_follow_query_after_token_id: int = -1
     request_key_follow_query_before_token_ids: list[int] = field(default_factory=list)
     request_key_follow_query_ignore_token_ids: list[int] = field(default_factory=list)
@@ -103,11 +104,23 @@ class TrainConfig:
     gradient_accumulation_steps: int = 1
     warmup_steps: int = 3
     cosine_decay: bool = False
+    lr_decay_start_step: int = -1
+    lr_decay_end_step: int = -1
+    min_lr: float = 0.0
     device: str = "auto"
     dtype: str = "auto"
     log_every: int = 5
     eval_every: int = 15
     save_every: int = 0
+    save_best: bool = False
+    early_stop_patience_evals: int = 0
+    early_stop_min_delta: float = 0.0
+    early_stop_min_step: int = 0
+    restore_best_on_finish: bool = False
+    validation_lr_decay_patience_evals: int = 0
+    validation_lr_decay_factor: float = 0.5
+    validation_lr_decay_min_scale: float = 0.1
+    validation_lr_decay_min_step: int = 0
     output_dir: str = "runs/debug"
 
 
@@ -201,6 +214,60 @@ def load_config(path: str | Path) -> ModelConfig:
         config.compression.anchors_per_block = 0
     if config.n_kv_heads is None:
         config.n_kv_heads = config.n_heads
+    return config
+
+
+def _single_token_id(tokenizer: Any, text: str) -> int:
+    ids = tokenizer.encode(text, add_bos=False, add_eos=False)
+    if len(ids) != 1:
+        raise ValueError(f"expected {text!r} to encode as one token, got {ids}")
+    return int(ids[0])
+
+
+def _token_id_if_present(tokenizer: Any, token: str) -> int | None:
+    value = getattr(tokenizer, "vocab", {}).get(token)
+    return int(value) if value is not None else None
+
+
+def _unique_token_ids(values: list[int | None]) -> list[int]:
+    seen: set[int] = set()
+    ids: list[int] = []
+    for value in values:
+        if value is None:
+            continue
+        token_id = int(value)
+        if token_id not in seen:
+            seen.add(token_id)
+            ids.append(token_id)
+    return ids
+
+
+def resolve_copy_head_token_ids(config: ModelConfig, tokenizer: Any) -> ModelConfig:
+    """Resolve route-control token ids that can move after tokenizer training."""
+
+    copy = config.copy_head
+    newline_ids = _unique_token_ids(
+        [
+            _token_id_if_present(tokenizer, "<0x0A>"),
+            _token_id_if_present(tokenizer, "\n"),
+        ]
+    )
+    if copy.key_follow_stop_token_ids and newline_ids:
+        copy.key_follow_stop_token_ids = newline_ids
+    if copy.request_key_follow_query_after_token_id >= 0:
+        copy.request_key_follow_query_after_token_id = _single_token_id(tokenizer, ":")
+    if copy.request_key_follow_source_separator_token_id >= 0:
+        copy.request_key_follow_source_separator_token_id = _single_token_id(tokenizer, ":")
+    if copy.request_key_follow_query_before_token_ids:
+        copy.request_key_follow_query_before_token_ids = [_single_token_id(tokenizer, ".")]
+    if copy.request_key_follow_query_ignore_token_ids:
+        copy.request_key_follow_query_ignore_token_ids = _unique_token_ids(
+            [
+                *newline_ids,
+                _single_token_id(tokenizer, " "),
+                _single_token_id(tokenizer, ","),
+            ]
+        )
     return config
 
 

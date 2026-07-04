@@ -53,10 +53,30 @@ def maybe_autocast(device: torch.device, dtype: torch.dtype):
     return nullcontext()
 
 
-def lr_for_step(base_lr: float, step: int, warmup_steps: int) -> float:
-    if warmup_steps <= 0:
+def lr_for_step(
+    base_lr: float,
+    step: int,
+    warmup_steps: int,
+    *,
+    total_steps: int | None = None,
+    cosine_decay: bool = False,
+    min_lr: float = 0.0,
+    decay_start_step: int = -1,
+    decay_end_step: int = -1,
+) -> float:
+    if warmup_steps > 0 and step < warmup_steps:
+        return base_lr * min(1.0, float(step + 1) / warmup_steps)
+    if not cosine_decay or total_steps is None:
         return base_lr
-    return base_lr * min(1.0, float(step + 1) / warmup_steps)
+
+    start = warmup_steps if decay_start_step < 0 else max(warmup_steps, decay_start_step)
+    if step < start:
+        return base_lr
+    end = decay_end_step if decay_end_step > start else total_steps
+    span = max(1, end - start - 1)
+    progress = min(1.0, max(0.0, float(step - start) / span))
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return min_lr + (base_lr - min_lr) * cosine
 
 
 def _float(value: Any) -> float:
@@ -124,7 +144,16 @@ def run_training(
 
     model.train()
     for step in range(config.train.steps):
-        lr = lr_for_step(config.train.lr, step, config.train.warmup_steps)
+        lr = lr_for_step(
+            config.train.lr,
+            step,
+            config.train.warmup_steps,
+            total_steps=config.train.steps,
+            cosine_decay=config.train.cosine_decay,
+            min_lr=config.train.min_lr,
+            decay_start_step=config.train.lr_decay_start_step,
+            decay_end_step=config.train.lr_decay_end_step,
+        )
         for group in optimizer.param_groups:
             group["lr"] = lr
         batch = dataset.next_batch(config.train.batch_size, config.train.seq_len, device)

@@ -1,6 +1,6 @@
 model_name: raam
 vocab_size: 2048
-max_seq_len: 160
+max_seq_len: 384
 d_model: 128
 n_layers: 4
 n_heads: 4
@@ -59,7 +59,7 @@ mtp:
 train:
   seed: 17
   batch_size: 8
-  seq_len: 128
+  seq_len: 384
   steps: 1600
   lr: 0.001
   weight_decay: 0.0
@@ -77,4 +77,4 @@ train:
 eval:
   eval_batches: 4
   probe_lengths: [64, 128]
-  long_context_lengths: [160]
+  long_context_lengths: [384]

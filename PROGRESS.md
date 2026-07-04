@@ -1,5 +1,15 @@
 # RAAM-LM Progress
 
+## 2026-07-03 - MLOps MCP Integration
+
+- Installed `mlops-mcp-server` globally outside the repository at `/home/lumalgo/.codex/tools/mlops-mcp-server/.venv`.
+- Added a global wrapper at `/home/lumalgo/.codex/bin/mlops-mcp-server` and a Codex MCP config entry.
+- Added dependency-free `.mlops/experiments` support in `src/raam_lm/mlops.py`.
+- Added `scripts/backfill_mlops_runs.py` to import historical pulled run evidence from output folders.
+- Updated `scripts/train.py` with opt-in live tracker logging via `--mlops-project-path` or `RAAM_MLOPS_PROJECT_PATH`.
+- Ignored `.mlops/` in Git so local run state and artifact references are not published accidentally.
+- Added `docs/MLOPS.md` with backfill and live-training commands.
+
 ## 2026-07-02
 
 - Read the pasted goal text and treated it as source of truth.
@@ -4780,3 +4790,2168 @@ Interpretation:
   to extend from one requested value to ordered multi-field outputs and then
   back to patch-format validity, while treating exact pass rate rather than
   validation loss as the primary signal.
+
+## 2026-07-03 - Ordered Multi-Field Request-Value Gate
+
+Goal:
+
+- Test the next blocker after one requested value: ordered `target_fields=2`
+  value-only repo-context copying.
+- Compare RAAM with the matched Transformer before changing the route.
+- If it fails, diagnose with generated completions and implement the smallest
+  real fix.
+
+Baseline two-field comparison before fixes:
+
+```text
+RUN_ID=agentcoder_request_value_stop_eos_multifield2_compare_20260703T141125Z
+```
+
+Command shape:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir "$RUN_ROOT/raam" \
+  --device cuda --seed 29 \
+  --train-records 128 --train-variants-per-row 4 --eval-cases 48 \
+  --steps 2000 --seq-len 128 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only \
+  --target-fields 2 --max-new-tokens 96 \
+  --clean --no-fail
+```
+
+Matched Transformer used the same command with
+`configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml`.
+
+Baseline result:
+
+| Model | target fields | exact pass | seen | covered | held-out | behavior accuracy | val loss | tokens/sec | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM | 2 | 0 / 144 | 0 / 48 | 0 / 48 | 0 / 48 | 1.0 | 2.083217 | 26373.7 | 2944384 |
+| Transformer | 2 | 0 / 144 | 0 / 48 | 0 / 48 | 0 / 48 | 1.0 | 1.998388 | 27450.0 | 3537152 |
+
+Failure diagnosis:
+
+- Both models emitted exactly one requested value and then `<eos>`.
+- Example: expected `["copy_service_000", "copy_file_000.py"]`, generated
+  `["copy_file_000.py"]`.
+- This was not RAAM-specific. The request-key stop route treated every copied
+  source value boundary as answer termination.
+
+Implemented route fixes:
+
+- `src/raam_lm/copy_head.py`
+  - Track request-key rank and current assistant value index from generated
+    separators.
+  - Emit source separator tokens between requested values.
+  - Emit `<eos>` only after the final requested key.
+  - Reset value-prefix matching after assistant-generated separators.
+  - Add optional `request_key_follow_source_separator_token_id` to avoid using
+    source anchors that are not actual `key:` positions.
+- `src/raam_lm/config.py`
+  - Add `request_key_follow_source_separator_token_id`.
+- `configs/scratch/*_agentcoder_keyvalue_request_value_gate.yaml`
+  - Enable source separator anchoring with token id `271` (`:`).
+- Tests:
+  - ordered multi-value stop/separator behavior
+  - source-separator anchor constraint
+  - config assertion for the new gate field
+
+Verification:
+
+```text
+python3 -m py_compile src/raam_lm/config.py src/raam_lm/copy_head.py tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py
+
+/venv/main/bin/python -m pytest tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py \
+  -k "request_key or keyvalue_request_value_configs" -q
+# 11 passed, 26 deselected
+
+/venv/main/bin/python -m pytest tests/test_agentcoder_keyvalue_copy_generator.py tests/test_agentcoder_pipeline.py tests/test_copy_head.py \
+  -k "request_key or keyvalue or copy_head or assistant_loss_mask or dataset_packing_writes or pack_dataset_cli_forwards" -q
+# 40 passed, 8 deselected, 1 warning
+```
+
+Patched RAAM diagnostic rerun:
+
+```text
+RUN_ID=agentcoder_request_value_stop_eos_multifield2_orderedfix_compare_20260703T142933Z
+```
+
+The full original `max_new_tokens=96` eval was interrupted after it became clear
+the patched route could run to long generations on failures. Capped diagnostic
+evals used `max_new_tokens=24` against the completed RAAM checkpoint.
+
+| Eval | exact pass | seen | covered | held-out | behavior accuracy |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 12-case smoke | 10 / 12 | 10 / 12 | n/a | n/a | 1.0 |
+| full capped, ordered stop fix | 79 / 144 | 39 / 48 | 40 / 48 | 0 / 48 | 1.0 |
+| full capped, plus source separator anchor | 79 / 144 | 39 / 48 | 40 / 48 | 0 / 48 | 1.0 |
+
+Interpretation:
+
+- The ordered stop/separator fix is real: the gate moved from `0 / 144` exact
+  to `79 / 144` on the capped diagnostic eval.
+- It is not strong enough to escalate to `target_fields=3`.
+- Held-out remains `0 / 48`; the source-separator anchor did not move this,
+  so the simple false-anchor hypothesis is not the main blocker.
+- Remaining failures are mostly:
+  - separator-repeat loops on seen/covered cases, for example first value then
+    repeated `<|assistant|>` markers;
+  - partial byte-fallback copies on held-out values, for example `ce_164` or
+    truncated second values.
+- Validation loss is secondary here; exact value sequence is the primary signal.
+
+Artifact pull:
+
+```text
+/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_request_value_stop_eos_multifield2_compare_20260703T141125Z
+/home/lumalgo/Documents/Codex/2026-07-02/g/outputs/vast_agentcoder_request_value_stop_eos_multifield2_orderedfix_compare_20260703T142933Z
+```
+
+Remote cleanup:
+
+- Deleted remote `.pt`, `.bin`, and `.safetensors` files for the patched run.
+- Stopped Vast instance `43634442`; SSH no longer accepts a session, and Vast
+  reports `cur_state=stopped`, `intended_status=stopped`, `next_state=stopped`.
+
+Next step:
+
+- Do not escalate to `target_fields=3`.
+- Add a focused held-out byte-fallback/value-boundary gate:
+  - one and two requested values where values are intentionally out-of-vocab
+    byte fallback strings;
+  - exact first-token, continuation, separator, and final EOS assertions;
+  - explicit no-repeat/no-special-token checks after generated separators.
+- Fix the request-key route until that synthetic held-out gate passes, then
+  rerun the same `target_fields=2` coverage ladder against both RAAM and the
+  matched Transformer.
+
+## 2026-07-03 - focused byte-fallback boundary gate and target_fields=2 rerun
+
+Objective:
+
+- Fix the remaining `target_fields=2` request-value copy blocker before any
+  escalation to `target_fields=3`.
+- Add a focused held-out byte-fallback/value-boundary gate covering one and two
+  requested values.
+- Rerun the full `target_fields=2` coverage ladder only after the focused gate
+  passed.
+
+Implementation:
+
+- `src/raam_lm/copy_head.py`
+  - Added deterministic assistant output-token indexing for request-value
+    routing, so byte-fallback continuation advances by exact source offset
+    rather than ambiguous repeated prefix matches.
+  - Kept multi-key request ordering and source-separator anchoring.
+- `src/raam_lm/config.py`
+  - Added tokenizer-aware `resolve_copy_head_token_ids(config, tokenizer)` for
+    newline, colon, period, space, and comma ids that move after tokenizer
+    training.
+- `scripts/train.py`, `scripts/eval_overfit_sanity.py`, `scripts/generate.py`,
+  and `scripts/qualitative_checkpoint_inspect.py`
+  - Resolve copy-head route-control token ids after loading the trained
+    tokenizer.
+- `scripts/run_agentcoder_keyvalue_copy_gate.py`
+  - Added a sequence-window preflight. The gate now fails before training if
+    the generated training records do not fit `--seq-len` or if eval prompt
+    plus expected completion cannot fit `config.max_seq_len`.
+- `configs/scratch/*_agentcoder_keyvalue_request_value_gate.yaml`
+  - Raised `max_seq_len`, `train.seq_len`, and eval long-context length from
+    `160` / `128` to `384`.
+  - Raised `request_key_follow_strength` from `12.0` to `20.0` so the
+    deterministic first-token route beats learned EOS after nonterminal
+    separators.
+- Tests:
+  - Added held-out byte-fallback/value-boundary cases for `target_fields=1`
+    and `target_fields=2`.
+  - Added a request-value config/window test for the focused gate shape.
+  - Added a copy-head guard that the second value's first token beats strong
+    learned EOS and `<|assistant|>` logits after a generated nonterminal
+    separator.
+  - Added config resolver coverage for trained-tokenizer punctuation/newline
+    ids.
+
+Key diagnosis:
+
+- The first focused one-value run failed at `1 / 24` before token-id
+  resolution because trained tokenizer punctuation/newline ids did not match
+  the hard-coded config ids.
+- Re-evaluating that same checkpoint after resolver wiring improved to
+  `12 / 24`.
+- Prompt/completion length audit then found the larger blocker: focused
+  boundary prompts were already `248-288` tokens before generation and up to
+  `341` tokens with expected completion, while eval kept only `160` tokens.
+  This truncated the source table during generation.
+- Re-evaluating the old one-field checkpoint with a `384` context changed it
+  from `12 / 24` to `24 / 24`, confirming truncation as a real failure cause.
+- The clean two-field focused run initially reached only `7 / 24`. Failures
+  copied the first wrapped value, emitted the separator, then chose EOS. A
+  logit probe on `keyvalue_heldout_002` showed EOS at `13.65` and the correct
+  second-value `<` route at `12.38`; increasing first-token request route
+  strength to `20.0` made `<` top at `20.00`.
+
+Verification:
+
+```text
+python3 -m py_compile tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py scripts/run_agentcoder_keyvalue_copy_gate.py src/raam_lm/config.py src/raam_lm/copy_head.py
+
+PYTHONPATH=src:. python3 -m pytest tests/test_agentcoder_keyvalue_copy_generator.py -k 'focus_window or request_value_configs or byte_fallback' -q
+# 3 passed, 12 deselected
+
+/venv/main/bin/python -m pytest tests/test_config.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py \
+  -k "resolve_copy_head or byte_fallback or value_boundary or focus_window or request_value_configs or request_key_follow_copies_byte_fallback_offsets" -q
+# 5 passed, 36 deselected
+```
+
+Focused gate run:
+
+```text
+RUN_ID=agentcoder_request_value_bytefallback_boundary_seq384_20260703T160000Z
+```
+
+| Run | exact pass | behavior accuracy | value accuracy | val loss | tokens/sec | FLOPs/token | max eval full tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM value-boundary held-out, target_fields=1 | 24 / 24 | 1.0 | 1.0 | 1.033544 | 81259.7 | 6899328 | 286 |
+| RAAM value-boundary held-out, target_fields=2 | 24 / 24 | 1.0 | 1.0 | 0.830342 | 80818.7 | 6910080 | 341 |
+
+Artifacts:
+
+```text
+runs/agentcoder_request_value_bytefallback_boundary_seq384_20260703T160000Z/raam_fields1/summary.json
+runs/agentcoder_request_value_bytefallback_boundary_seq384_20260703T160000Z/raam_fields1/keyvalue_eval.json
+runs/agentcoder_request_value_bytefallback_boundary_seq384_20260703T160000Z/raam_fields2/summary.json
+runs/agentcoder_request_value_bytefallback_boundary_seq384_20260703T160000Z/raam_fields2/keyvalue_eval.json
+```
+
+Full `target_fields=2` coverage ladder rerun:
+
+```text
+RUN_ID=agentcoder_request_value_target_fields2_coverage_seq384_20260703T170000Z
+```
+
+Command shape:
+
+```bash
+/venv/main/bin/python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir "$RUN_ROOT/raam" \
+  --device cuda --seed 31 \
+  --train-records 96 --train-variants-per-row 4 --eval-cases 48 \
+  --steps 1600 --seq-len 384 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only \
+  --target-fields 2 --max-new-tokens 96 \
+  --clean --no-fail
+```
+
+Matched Transformer used the same command with
+`configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml`.
+
+| Model | exact pass | seen | covered | held-out | behavior accuracy | value accuracy | val loss | tokens/sec | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM | 133 / 144 | 48 / 48 | 48 / 48 | 37 / 48 | 1.0 | 0.923611 | 2.154128 | 80519.0 | 7095168 |
+| Transformer | 144 / 144 | 48 / 48 | 48 / 48 | 48 / 48 | 1.0 | 1.0 | 1.978342 | 62743.6 | 8109824 |
+
+RAAM remaining held-out failures:
+
+- `keyvalue_heldout_002`, requested `parser, fixture`; expected
+  `copy_parser_098.py`, `case_fixture_098`; generated
+  `copy_parser_098.py` followed by repeated `<|assistant|>ccopy_parser_098.py`
+  fragments.
+- `keyvalue_heldout_007`, requested `adapter, file`; expected
+  `disabled_adapter_103`, `copy_file_103`; generated repeated first-value /
+  assistant-marker fragments and only a partial `copy_file_103`.
+- `keyvalue_heldout_022`, requested `route, service`; expected
+  `allowed_route_118`, `allowed_service_118`; generated repeated
+  `allowed_route_118` with assistant markers plus unrelated fragments.
+
+Interpretation:
+
+- The focused blocker is fixed: one-value and two-value held-out
+  byte-fallback boundary gates both pass `24 / 24`.
+- The broader target_fields=2 ladder is much stronger than the previous
+  `79 / 144` capped RAAM diagnostic, but RAAM still trails the matched
+  Transformer on held-out value copies.
+- The remaining RAAM failures are no longer simple EOS-after-first-value
+  failures. They are held-out separator/assistant-marker repetition loops after
+  the first value, while seen and tokenizer-covered tiers are now perfect.
+- Do not escalate to `target_fields=3` yet. The next modeling step should focus
+  on RAAM's held-out second-value stability and special-token repetition after
+  generated separators, using the Transformer `144 / 144` run as the matched
+  target.
+
+Artifact pull:
+
+- Pulled the two run directories locally under `runs/`, excluding checkpoints
+  and packed `.bin` files.
+
+Remote cleanup:
+
+- Stopped Vast instance `43634442`.
+- Verified `cur_state=stopped`, `intended_status=stopped`,
+  `next_state=stopped`, `actual_status=exited`.
+
+Post-ladder decoder suppression re-eval:
+
+- Added generation-time suppression of special/control tokens inside assistant
+  completions while keeping `<eos>` available. This is intended to target the
+  remaining RAAM held-out failures that repeat `<|assistant|>` after a
+  generated separator.
+- Added `AgentCoderTokenizer.generation_suppressed_token_ids()` and wired it
+  into `scripts/eval_overfit_sanity.py`, `scripts/generate.py`, and
+  `scripts/qualitative_checkpoint_inspect.py`.
+- Local verification:
+
+```text
+python3 -m py_compile src/raam_lm/tokenization.py scripts/eval_overfit_sanity.py scripts/generate.py scripts/qualitative_checkpoint_inspect.py tests/test_tokenization.py
+
+PYTHONPATH=src:. python3 -m pytest tests/test_tokenization.py -q
+# 1 passed
+```
+
+- Remote verification after syncing the suppression change back to Vast:
+
+```text
+/venv/main/bin/python -m py_compile src/raam_lm/tokenization.py scripts/eval_overfit_sanity.py scripts/generate.py scripts/qualitative_checkpoint_inspect.py tests/test_tokenization.py tests/test_copy_head.py tests/test_agentcoder_keyvalue_copy_generator.py
+
+PYTHONPATH=src:. /venv/main/bin/python -m pytest tests/test_tokenization.py tests/test_config.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py \
+  -k "generation_suppressed or resolve_copy_head or byte_fallback or value_boundary or focus_window or request_value_configs or request_key_follow_copies_byte_fallback_offsets" -q
+# 6 passed, 36 deselected
+```
+
+- Re-evaluated saved `target_fields=2` coverage checkpoints with suppressed
+  special/control ids `[0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]` and `<eos>`
+  still allowed:
+
+```text
+/venv/main/bin/python scripts/eval_overfit_sanity.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml \
+  --tokenizer "$OUT/tokenizer.json" \
+  --checkpoint "$OUT/train/checkpoints/last.pt" \
+  --device cuda \
+  --cases-json "$OUT/generated/keyvalue_eval_cases.json" \
+  --output "$OUT/keyvalue_eval_suppressed.json" \
+  --max-new-tokens 96 \
+  --min-pass-rate 1.0 \
+  --no-fail
+```
+
+Suppressed-eval result:
+
+| Model | exact pass | seen | covered | held-out | behavior accuracy | value accuracy | failures |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM | 144 / 144 | 48 / 48 | 48 / 48 | 48 / 48 | 1.0 | 1.0 | 0 |
+| Transformer | 144 / 144 | 48 / 48 | 48 / 48 | 48 / 48 | 1.0 | 1.0 | 0 |
+
+Suppressed-eval artifacts:
+
+```text
+runs/agentcoder_request_value_target_fields2_coverage_seq384_20260703T170000Z/raam/keyvalue_eval_suppressed.json
+runs/agentcoder_request_value_target_fields2_coverage_seq384_20260703T170000Z/transformer/keyvalue_eval_suppressed.json
+```
+
+Final interpretation:
+
+- The focused held-out byte-fallback/value-boundary blocker is fixed.
+- The broader `target_fields=2` coverage ladder now passes for RAAM and the
+  matched Transformer when generation masks non-EOS special/control tokens.
+- The remaining pre-suppression RAAM failures were decoding/control-token
+  failures, not a need to escalate the task to `target_fields=3`.
+
+Final Vast cleanup:
+
+- Original checkpoint instance `43634442` stopped and verified:
+  `cur_state=stopped`, `intended_status=stopped`, `next_state=stopped`,
+  `actual_status=exited`.
+- Scratch instances created while the original instance was unavailable:
+  `43715662` and `43715959`; both were stopped and then destroyed with
+  `vastai destroy instance ... -y`.
+
+## 2026-07-03 - real Stage 5 pilot training run
+
+Objective:
+
+- Start a real pilot training run after the `target_fields=2` request-value copy
+  blocker was fixed, using the real expanded Stage 5 AgentCoder corpus rather
+  than another synthetic copy gate.
+
+Preparation:
+
+- Verified local Python syntax for the touched model/tokenizer/training/eval
+  paths and shell syntax for the Vast launch/pull scripts.
+- Verified targeted local tests:
+
+```text
+PYTHONPATH=src:. python3 -m pytest tests/test_tokenization.py tests/test_agentcoder_keyvalue_copy_generator.py -k 'generation_suppressed or focus_window or request_value_configs or byte_fallback' -q
+# 4 passed, 12 deselected
+```
+
+- Started Vast instance `43634442` and verified `/root/raam-lm`,
+  `/root/data/agentcoder_stage5/tokenizer.json`,
+  `/root/data/agentcoder_stage5/packed_2048/train.bin`, and
+  `/root/data/agentcoder_stage5/packed_2048/val.bin`.
+- Synced the current dirty local worktree changes to `/root/raam-lm`.
+- Verified remote syntax and targeted tests:
+
+```text
+PYTHONPATH=src:. /venv/main/bin/python -m pytest tests/test_tokenization.py tests/test_config.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py \
+  -k "generation_suppressed or resolve_copy_head or byte_fallback or value_boundary or focus_window or request_value_configs or request_key_follow_copies_byte_fallback_offsets" -q
+# 6 passed, 36 deselected
+```
+
+- Added launcher pass-through for `RAAM_MLOPS_PROJECT_PATH` in:
+  - `scripts/vast_train_100m_candidate.sh`
+  - `scripts/vast_launch_stage5_gate.sh`
+
+Pilot command shape:
+
+```bash
+INSTANCE_ID=43634442 \
+SSH_HOST=ssh1.vast.ai \
+SSH_PORT=34442 \
+RUN_ID=stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5.yaml \
+BASE_DIR=/root/raam-lm \
+DATA_ROOT=/root/data/agentcoder_stage5 \
+RAW_DIR=/root/data/agentcoder_stage5/raw \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048 \
+TOKENIZER=/root/data/agentcoder_stage5/tokenizer.json \
+RAAM_MLOPS_PROJECT_PATH=/root/raam-lm \
+STEPS=2000 \
+RESUME_STEPS=2200 \
+SAVE_EVERY=200 \
+EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=1 \
+KEEP_TRAINING_CHECKPOINTS=1 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Run evidence:
+
+- Remote run root:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z`
+- Local artifact pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current`
+- Local MLOps run id: `live-train-cea845692806`
+- `.mlops` metric rows after summary logging: `2201`
+- Model: compression-only RAAM 100M Stage 5, `lr: 5e-5`, reconstruction/MTP
+  disabled in the objective, fallback gated-conv mixer backend.
+- Tokens per step: `65536`.
+- Training completed through the planned resume endpoint at step `2199`.
+- Vast cleanup: instance `43634442` verified `cur_state=stopped`,
+  `intended_status=stopped`, `next_state=stopped`, `actual_status=exited`.
+
+Metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Logged train rows | 2200 |
+| Tokens seen | 144179200 |
+| First validation loss | 10.389572143554688 |
+| Best validation loss | 3.0210491180419923 at step 800 |
+| Final validation loss | 3.2564679265022276 at step 2199 |
+| Final train loss | 2.822740316390991 |
+| Final tokens/sec | 238189.41361988886 |
+| Peak allocated VRAM MB | 12310.53662109375 |
+| Agentic JSON tool-call validity | 0.0 |
+| Agentic mean patch apply rate | 0.0 |
+| Best-step qualitative useful completions | 0 / 8 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 0 | 10.389572143554688 |
+| 100 | 7.264174485206604 |
+| 200 | 5.9533222913742065 |
+| 300 | 4.944909036159515 |
+| 400 | 4.30405638217926 |
+| 500 | 3.5682665586471556 |
+| 600 | 3.1166778326034548 |
+| 700 | 3.04752801656723 |
+| 800 | 3.0210491180419923 |
+| 900 | 3.0360927820205688 |
+| 1000 | 3.1705517292022707 |
+| 1100 | 3.2336891055107118 |
+| 1200 | 3.1605583310127257 |
+| 1300 | 3.2766310930252076 |
+| 1400 | 3.275023567676544 |
+| 1500 | 3.2647506475448607 |
+| 1600 | 3.1681557416915895 |
+| 1700 | 3.201487684249878 |
+| 1800 | 3.2474425196647645 |
+| 1900 | 3.1019840836524963 |
+| 1999 | 3.2698657631874086 |
+| 2000 | 3.269370412826538 |
+| 2100 | 3.296204650402069 |
+| 2199 | 3.2564679265022276 |
+
+Pulled artifacts:
+
+```text
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/runner.log
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/train/train_log.jsonl
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/train/agentic_eval.json
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/train/generation_smoke.txt
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/best_step_000800_qualitative_samples.json
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/best_step_000800_qualitative_samples.md
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/train/checkpoints/model_only_step_000800_fp16.pt
+runs/vast_backups/stage5_raam_agentcoder_100m_real_pilot_lr5e5_20260703T164256Z/current/train/checkpoints/model_only_fp16.pt
+```
+
+Model-only export sizes:
+
+- Best step 800 export: `201316691` bytes.
+- Final step 2199 export: `201315043` bytes.
+
+Interpretation:
+
+- We did begin real pilot training on the expanded Stage 5 corpus and completed
+  the planned `2000 -> 2200` resume run.
+- The training path is operational: real data, full 2048-token packing,
+  checkpoint/resume, live `.mlops` metrics, generation smoke, agentic eval,
+  compact final export, and compact best-step export all completed.
+- The best validation point still occurs early, around step `800`, and the
+  final checkpoint is worse than that best point. This repeats the earlier
+  capped-LR pattern rather than clearing the model for a larger spend.
+- The best-step qualitative inspection and final agentic eval still show no
+  useful chat/coding behavior. Treat `model_only_step_000800_fp16.pt` as the
+  current best base-LM pilot artifact, not as a usable assistant model.
+- Next highest-value work: do not simply run longer at `5e-5`; test either a
+  lower/decayed LR schedule after step `800`, better chat/code objective
+  weighting, or a data/tokenizer/template audit that explains why validation
+  improves while qualitative assistant behavior remains incoherent.
+
+## 2026-07-03 - assistant-loss masked decay pilot
+
+Objective:
+
+- Test the immediate Phase 1 blocker from the real pilot: the model was
+  learning the packed corpus loss but not assistant behavior, and validation
+  drifted after the best region.
+
+Changes under test:
+
+- Added assistant-only loss-mask packing to the Vast Stage 5 wrappers.
+- Added delayed cosine decay support: warm up to `5e-5`, hold through step
+  `800`, then decay toward `1e-5`.
+- Config under test:
+  `configs/scratch/raam_agentcoder_100m_stage5_lr5e5_masked_decay.yaml`.
+- Packed corpus:
+  `/root/data/agentcoder_stage5/packed_2048_assistant_loss`.
+
+Run:
+
+```bash
+RUN_ID=stage5_raam_agentcoder_100m_masked_decay_20260703T172643Z \
+CONFIG=configs/scratch/raam_agentcoder_100m_stage5_lr5e5_masked_decay.yaml \
+PACKED_DIR=/root/data/agentcoder_stage5/packed_2048_assistant_loss \
+ASSISTANT_LOSS_ONLY=1 \
+STEPS=2000 RESUME_STEPS=2200 SAVE_EVERY=200 EVAL_EVERY=100 \
+EXPORT_CHECKPOINT=1 KEEP_TRAINING_CHECKPOINTS=1 \
+bash scripts/vast_launch_stage5_gate.sh
+```
+
+Local artifact pull:
+`runs/vast_backups/stage5_raam_agentcoder_100m_masked_decay_20260703T172643Z/current`.
+The pull includes logs, manifest, agentic eval, generation smoke, and the compact
+`model_only_fp16.pt` export. Full optimizer checkpoints were not pulled. Vast
+instance `43634442` was stopped and verified `exited` after the pull.
+
+Metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Logged train rows | 2200 |
+| Tokens seen | 144179200 |
+| Total parameters | 83857922 |
+| Non-embedding parameters | 67080706 |
+| First validation loss | 10.436189889907837 |
+| Best validation loss | 2.8247740983963014 at step 1900 |
+| Final validation loss | 3.06810177564621 at step 2199 |
+| Final train loss | 2.0745818614959717 |
+| Final tokens/sec | 236448.31849039317 |
+| Peak allocated VRAM MB | 12310.66162109375 |
+| Agentic JSON tool-call validity | 0.0 |
+| Agentic mean patch apply rate | 0.0 |
+
+Validation curve:
+
+| Step | Val next-token loss |
+| ---: | ---: |
+| 0 | 10.436189889907837 |
+| 100 | 7.6992237091064455 |
+| 200 | 6.742557954788208 |
+| 300 | 5.711968731880188 |
+| 400 | 4.869263696670532 |
+| 500 | 4.086435151100159 |
+| 600 | 3.6132681012153625 |
+| 700 | 3.594025444984436 |
+| 800 | 3.257691729068756 |
+| 900 | 3.1018675565719604 |
+| 1000 | 3.1586724519729614 |
+| 1100 | 3.0839218378067015 |
+| 1200 | 3.073712611198425 |
+| 1300 | 3.144188177585602 |
+| 1400 | 3.039172911643982 |
+| 1500 | 3.0964579701423647 |
+| 1600 | 2.897498893737793 |
+| 1700 | 2.924788475036621 |
+| 1800 | 2.920748841762543 |
+| 1900 | 2.8247740983963014 |
+| 1999 | 3.047560155391693 |
+| 2000 | 3.090535855293274 |
+| 2100 | 2.881490647792816 |
+| 2199 | 3.06810177564621 |
+
+Interpretation:
+
+- Phase 1 training infrastructure is working on real data: assistant loss masks,
+  2048-token packing, 84M-param training, optimizer resume, validation, agentic
+  eval, model-only export, artifact pull, and instance shutdown all completed.
+- The masked objective plus decay materially improved validation versus the
+  previous real pilot (`2.8248` best versus `3.0210`, `3.0681` final versus
+  `3.2565`), and it moved the best point from step `800` to step `1900`.
+- The drift problem is reduced but not solved: final loss is still `+0.2433`
+  above the best measured loss.
+- The useful-behavior gate is still not cleared. Final agentic eval remains
+  `0.0` for JSON validity and patch apply, and generation is still incoherent.
+- One procedural issue: the best step `1900` was evaluated but not checkpointed
+  because saves were every `200` steps. Future gates should align save/eval
+  cadence around candidate best regions, or save best-on-validation directly.
+
+## 2026-07-03 - best-checkpoint restore and guarded 84M useful-behavior run
+
+Objective:
+
+- Turn the repeated post-best validation drift into a non-promoted artifact state,
+  while preserving the first nonzero useful qualitative behavior at the 84M scale.
+
+Implementation changes:
+
+- Added `train.save_best`, `train.early_stop_patience_evals`,
+  `train.early_stop_min_delta`, `train.early_stop_min_step`, and
+  `train.restore_best_on_finish`.
+- `scripts/train.py` now saves `checkpoints/best.pt` on validation improvement,
+  can stop after repeated non-improving validation checks, and can restore the
+  best checkpoint before writing `checkpoints/last.pt`.
+- Vast wrappers forward the new controls.
+- Stage 5 guarded defaults:
+  - broad masked/records-only configs: patience `4`, minimum stop step `1800`,
+    restore best on finish.
+  - curated SFT config: patience `3`, minimum stop step `2500`, restore best on
+    finish.
+
+Validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py scripts/train.py tests/test_config.py tests/test_agentcoder_pipeline.py
+bash -n scripts/vast_train_50m.sh scripts/vast_train_100m_candidate.sh scripts/vast_launch_stage5_gate.sh
+python3 -m pytest -q tests/test_config.py
+```
+
+Local pytest that imports `raam_lm.agent_data` cannot run on the workstation
+Python because `torch` is not installed. Remote RTX 5090 validation passed:
+
+```bash
+PYTHONPATH=src:. python -m pytest -q tests/test_config.py tests/test_agentcoder_pipeline.py \
+  -k "train_resume_generate_and_agentic_eval or packing_can_focus or packing_can_disable or filter_long or pack_dataset_cli"
+```
+
+Remote result: `5 passed, 11 deselected`.
+
+Forced tiny drift-control smoke:
+
+- With `early_stop_patience_evals=1`, `early_stop_min_delta=999`, and
+  `restore_best_on_finish=true`, training stopped at step `1`, restored
+  `last.pt` to best step `0`, and marked `last_restored_from_best=true`.
+
+Corrected 84M guarded curated SFT run:
+
+- Remote run:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_curated_guarded_late_20260703T194229Z`.
+- Local pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_curated_guarded_late_20260703T194229Z/current`.
+- MLOps train backfill: `backfill-train-b676d676a172`.
+- Vast instance `43634442` was stopped and verified `exited` after artifact pull.
+
+Metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Non-embedding parameters | 67080706 |
+| Best validation loss | 0.4507140815258026 at step 2500 |
+| Early stop step | 2800 |
+| Final/promoted checkpoint step | 2500 |
+| Restored best on finish | true |
+| Curated eval pass rate | 9 / 10 |
+| Behavior accuracy | 10 / 10 |
+| Qualitative useful samples | 4 / 8 |
+| Compact model export | `train/checkpoints/model_only_guarded_fp16.pt` |
+
+Validation curve excerpt:
+
+| Step | Val next-token loss | Best step | No-improve evals | Stopped |
+| ---: | ---: | ---: | ---: | --- |
+| 1500 | 0.9468620866537094 | 1500 | 0 | false |
+| 1600 | 0.5646604672074318 | 1600 | 0 | false |
+| 1700 | 0.8782196938991547 | 1600 | 1 | false |
+| 1800 | 0.77409528195858 | 1600 | 2 | false |
+| 1900 | 0.9934779927134514 | 1600 | 3 | false |
+| 2000 | 0.9929693937301636 | 1600 | 4 | false |
+| 2100 | 0.7492213994264603 | 1600 | 5 | false |
+| 2200 | 0.819332629442215 | 1600 | 6 | false |
+| 2300 | 0.6929627060890198 | 1600 | 7 | false |
+| 2400 | 0.6331205368041992 | 1600 | 8 | false |
+| 2500 | 0.4507140815258026 | 2500 | 0 | false |
+| 2600 | 0.8772342354059219 | 2500 | 1 | false |
+| 2700 | 0.8555787801742554 | 2500 | 2 | false |
+| 2800 | 0.9369257986545563 | 2500 | 3 | true |
+
+Interpretation:
+
+- Raw validation loss still drifts after the best checkpoint, but the trainer now
+  stops the late degradation and writes the promoted `last.pt` from the best
+  validation state. This fixes the artifact-promotion failure mode behind the
+  post-step-800 drift.
+- The 84M model has verified nonzero useful qualitative behavior on the guarded
+  checkpoint: `4 / 8` useful samples, with useful examples across chat, coding,
+  software-engineering, and agentic-coding categories.
+- This is still a curated curriculum result, not proof of a broadly strong
+  chat/code model. The broad records-only run remains the next generalization
+  gate.
+
+## 2026-07-03 - validation LR backoff drift experiment
+
+Objective:
+
+- Reduce raw post-best validation drift, not just restore the promoted artifact
+  to the best checkpoint.
+
+Implementation changes:
+
+- Added validation-triggered LR backoff controls:
+  `train.validation_lr_decay_patience_evals`,
+  `train.validation_lr_decay_factor`,
+  `train.validation_lr_decay_min_scale`, and
+  `train.validation_lr_decay_min_step`.
+- `scripts/train.py` now logs `scheduled_learning_rate`,
+  `validation_lr_decay_scale`, `validation_lr_decay_count`, and per-eval decay
+  events. LR backoff is separate from early stopping.
+- Vast wrappers forward the new controls.
+- Stage 5 defaults:
+  - broad masked/records-only configs back off from step `800`.
+  - curated SFT backs off from step `2500`.
+
+Validation:
+
+```bash
+python3 -m py_compile src/raam_lm/config.py scripts/train.py tests/test_config.py tests/test_agentcoder_pipeline.py
+bash -n scripts/vast_train_50m.sh scripts/vast_train_100m_candidate.sh scripts/vast_launch_stage5_gate.sh
+python3 -m pytest -q tests/test_config.py
+```
+
+Local result: `2 passed`.
+
+Remote RTX 5090 result:
+
+```bash
+PYTHONPATH=src:. python -m pytest -q tests/test_config.py tests/test_agentcoder_pipeline.py \
+  -k "train_resume_generate_and_agentic_eval or packing_can_focus or packing_can_disable or filter_long or pack_dataset_cli"
+```
+
+Remote result: `5 passed, 11 deselected`.
+
+Forced tiny LR-backoff smoke:
+
+- With `validation_lr_decay_patience_evals=1`,
+  `validation_lr_decay_factor=0.5`, and `validation_lr_decay_min_scale=0.25`,
+  the trainer applied two LR backoffs at steps `1` and `2`, ending with
+  `validation_lr_decay_scale=0.25`.
+
+Curated plateau-LR run:
+
+- Remote run:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_curated_plateau_lr_20260703T200010Z`.
+- Local pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_curated_plateau_lr_20260703T200010Z/current`.
+- MLOps train backfill: `backfill-train-6c445e2fb55a`.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.4507140815258026 at step 2500 |
+| Early stop step | 2800 |
+| Final/promoted checkpoint step | 2500 |
+| Validation LR backoffs | 2 |
+| Final LR scale | 0.25 |
+| Raw drift after best | +0.488767609000206 |
+| Curated eval pass rate | 9 / 10 |
+| Qualitative useful samples | 4 / 8 |
+
+Interpretation:
+
+- The backoff machinery works and preserves the useful 84M curated checkpoint,
+  but it does not materially reduce curated post-best drift. The curated drift
+  appears to be dominated by tiny validation-set instability/overfit rather than
+  a simple LR overshoot.
+
+Broad records-only plateau-LR run:
+
+- Remote run:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_records_plateau_lr_20260703T201012Z`.
+- Local pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_records_plateau_lr_20260703T201012Z/current`.
+- MLOps train backfill: `backfill-train-696be62cff28`.
+- Vast instance `43634442` was stopped and verified `exited` after artifact
+  pulls.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 3.286919629573822 at step 1500 |
+| Early stop step | 1900 |
+| Final/promoted checkpoint step | 1500 |
+| Validation LR backoffs | 2 |
+| Final LR scale | 0.25 |
+| Raw drift after best | +0.05094232559204093 |
+| Agentic JSON tool-call validity | 0.0 |
+| Agentic mean patch apply rate | 0.0 |
+| Qualitative useful samples | 0 / 8 |
+
+Validation curve:
+
+| Step | Val next-token loss | LR scale | LR backoff | Stopped |
+| ---: | ---: | ---: | --- | --- |
+| 1500 | 3.286919629573822 | 1.0 | false | false |
+| 1600 | 3.368794345855713 | 1.0 | true -> 0.5 | false |
+| 1700 | 3.2997918367385863 | 0.5 | true -> 0.25 | false |
+| 1800 | 3.3051330924034117 | 0.25 | false | false |
+| 1900 | 3.337861955165863 | 0.25 | false | true |
+
+Interpretation:
+
+- LR backoff reduced broad records-only raw drift amplitude versus the earlier
+  records-cap run (`+0.0509` versus `+0.1706`), but the absolute best validation
+  loss was worse and useful behavior stayed at zero.
+- Current best practical state remains: use guarded/best-restored checkpoints for
+  promotion, keep the curated 84M checkpoint as proof of nonzero useful behavior,
+  and treat broad useful behavior as the next generalization blocker.
+
+## 2026-07-03 - mixed broad/curated curriculum bridge
+
+Objective:
+
+- Find a Stage 5 curriculum that keeps some broad real records in training while
+  preserving nonzero useful qualitative behavior and reducing post-best drift.
+
+Implementation:
+
+- Added `scripts/make_agentcoder_mixed_curriculum.py`, which samples structured
+  real AgentCoder records and repeats the curated behavior anchors into one
+  mixed JSONL.
+- Added `configs/scratch/raam_agentcoder_100m_mixed_stage5_sft.yaml`, an 84M
+  bridge config with 512-token training, best checkpoint restore, early stop, and
+  validation LR backoff.
+- Added `tests/test_mixed_curriculum.py`.
+
+Validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_mixed_curriculum.py tests/test_mixed_curriculum.py
+python3 -m pytest -q tests/test_mixed_curriculum.py tests/test_config.py
+PYTHONPATH=src python3 - <<'PY'
+from raam_lm.config import load_config
+cfg = load_config("configs/scratch/raam_agentcoder_100m_mixed_stage5_sft.yaml")
+print(cfg.d_model, cfg.n_layers, cfg.train.seq_len, cfg.train.validation_lr_decay_patience_evals)
+PY
+```
+
+Local result: `3 passed`.
+
+Remote RTX 5090 result:
+
+```bash
+PYTHONPATH=src:. python -m pytest -q tests/test_mixed_curriculum.py tests/test_config.py
+```
+
+Remote result: `3 passed`.
+
+Broad-heavy mixed run:
+
+- Remote run:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_mixed_curriculum_20260703T202712Z`.
+- Local pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_mixed_curriculum_20260703T202712Z/current`.
+- MLOps train backfill: `backfill-train-a9e8c6e18384`.
+- Mix: `2000` real records + `1920` curated records.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 2.6351894438266754 at step 2000 |
+| Early stop step | 2400 |
+| Final/promoted checkpoint step | 2000 |
+| Raw drift after best | +0.2767331600189209 |
+| Curated eval pass rate | 2 / 10 |
+| Qualitative useful samples | 0 / 8 |
+
+Interpretation:
+
+- The broad-heavy mix improved validation versus pure records-only, but it
+  washed out useful behavior. This ratio should not be promoted.
+
+Curated-dominant mixed run:
+
+- Remote run:
+  `/root/raam-lm/runs/stage5_raam_agentcoder_100m_mixed_curated_dominant_20260703T203910Z`.
+- Local pull:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_mixed_curated_dominant_20260703T203910Z/current`.
+- MLOps train backfill: `backfill-train-adda7bfcc70a`.
+- Mix: `500` real records + `2880` curated records.
+- Vast instance `43634442` was stopped and verified `exited` after artifact
+  pulls.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 2.0162661224603653 at step 1900 |
+| Early stop step | 2300 |
+| Final/promoted checkpoint step | 1900 |
+| Restored best on finish | true |
+| Validation LR backoffs | 2 |
+| Raw drift after best | +0.009236752986907959 |
+| Curated eval pass rate | 3 / 10 |
+| Behavior accuracy | 7 / 10 |
+| Agentic JSON validity | 0.0 |
+| Agentic mean patch apply rate | 0.0 |
+| Qualitative useful samples | 2 / 8 |
+| Compact model export | `train/checkpoints/model_only_mixed_curated_dominant_fp16.pt` |
+
+Validation curve:
+
+| Step | Val next-token loss | Best step | LR scale | Stopped |
+| ---: | ---: | ---: | ---: | --- |
+| 1500 | 2.339496925473213 | 1500 | 1.0 | false |
+| 1600 | 2.1321469247341156 | 1600 | 1.0 | false |
+| 1700 | 2.223752737045288 | 1600 | 1.0 | false |
+| 1800 | 2.140855960547924 | 1600 | 1.0 | false |
+| 1900 | 2.0162661224603653 | 1900 | 1.0 | false |
+| 2000 | 2.1169208586215973 | 1900 | 1.0 -> 0.5 | false |
+| 2100 | 2.027666814625263 | 1900 | 0.5 -> 0.25 | false |
+| 2200 | 2.070050060749054 | 1900 | 0.25 | false |
+| 2300 | 2.0255028754472733 | 1900 | 0.25 | true |
+
+Interpretation:
+
+- This is the first single 84M run that satisfies both target signals together:
+  post-best drift is reduced to near-flat (`+0.0092`), and qualitative behavior is
+  nonzero (`2 / 8` useful samples).
+- It is not a broadly useful coding agent yet: agentic JSON/tool and patch evals
+  are still zero, and curated exact pass rate is only `3 / 10`. Treat this as a
+  Phase 1 gate pass, not a strong-model claim.
+
+## 2026-07-04 - coding ladder repair SFT pilot
+
+Objective:
+
+- Move from tiny/memorized code behavior toward verified held-out coding tasks.
+- Add a repo-owned coding ladder generator and strict eval, then run a real
+  repair SFT pilot on an RTX 5090 from the current 84M curated-dominant
+  checkpoint.
+
+Implementation:
+
+- Added `scripts/make_agentcoder_coding_ladder_sft.py`.
+- Added `scripts/eval_coding_ladder.py`.
+- Added `configs/scratch/raam_agentcoder_100m_coding_ladder_repair_sft.yaml`.
+- Added `tests/test_coding_ladder.py`.
+
+Local validation:
+
+```bash
+python3 -m py_compile scripts/make_agentcoder_coding_ladder_sft.py scripts/eval_coding_ladder.py tests/test_coding_ladder.py
+python3 -m pytest -q tests/test_coding_ladder.py
+```
+
+Result: `3 passed`.
+
+Local packing smoke remained blocked on this CPU environment because local
+Python did not have `torch` installed. The actual pack/train/eval path was
+validated on Vast.ai with the CUDA image.
+
+Vast.ai execution:
+
+- The cheap `Type #27594213` offer disappeared before it could be rented.
+- A known reachable RTX 5090 instance was used instead:
+  `43806336`, `NVIDIA GeForce RTX 5090`, torch `2.12.0+cu130`, CUDA available.
+- A cheaper follow-up instance `43807428` was tried but SSH refused connections,
+  so it was stopped.
+- All instances were verified `exited` after artifact pulls:
+  `43627905`, `43634442`, `43806336`, and `43807428`.
+
+Baseline ladder eval, before repair:
+
+- Checkpoint:
+  `runs/vast_backups/stage5_raam_agentcoder_100m_mixed_curated_dominant_20260703T203910Z/current/train/checkpoints/model_only_mixed_curated_dominant_fp16.pt`.
+- Ladder pass rate: `0 / 10`.
+- Function pass count: `1`.
+- JSON pass count: `0`.
+- Patch pass count: `0`.
+- Nonsense failures: `1`.
+
+First repair run:
+
+- Remote run:
+  `/root/raam-lm/runs/coding_ladder_repair_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/coding_ladder_repair_20260704T_remote/current`.
+- Dataset: `602` train records, `10` eval cases, no exact train/eval prompt
+  overlaps.
+- Packed data: `542` train docs, `60` validation docs, `121051` train tokens,
+  `14277` validation tokens.
+- Resume mode: `model_only`, starting after the curated-dominant checkpoint.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.1912618987262249 at step 2150 |
+| Final/promoted checkpoint step | 2150 |
+| Restored best on finish | true |
+| Validation LR backoffs | 2 |
+| Coding ladder pass rate | 0 / 10 |
+| Ladder function pass count | 3 |
+| Ladder JSON pass count | 0 |
+| Ladder patch pass count | 0 |
+| Ladder nonsense failures | 0 |
+| Curated eval pass rate | 3 / 10 |
+| Curated behavior accuracy | 7 / 10 |
+| Qualitative useful samples | 1 / 8 |
+| Compact model export | `train/checkpoints/model_only_coding_ladder_repair_fp16.pt` |
+
+Interpretation:
+
+- The first repair run reduced nonsense and improved some raw function behavior,
+  but strict ladder pass stayed `0 / 10`.
+- Raw generations showed a stop-control problem: after correct code, outputs
+  continued into learned final/test-command fragments.
+- Root cause: ladder records trained a `trace` followed by a `final`, while
+  generation suppresses special control tokens such as `<|final|>`. The model
+  learned to continue beyond the desired assistant answer instead of ending.
+
+Stop-control repair run:
+
+- Generator adjusted so ladder records end after the assistant trace, training
+  EOS immediately after the desired code/patch/JSON answer.
+- Remote run:
+  `/root/raam-lm/runs/coding_ladder_repair_stop_control_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/coding_ladder_repair_stop_control_20260704T_remote/current`.
+- Dataset: `820` train records, `10` eval cases, no exact train/eval prompt
+  overlaps.
+- Packed data: `738` train docs, `82` validation docs, `153400` train tokens,
+  `16780` validation tokens.
+- Resume mode: `optimizer`, continuing from the first repair run.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.203645471483469 at step 2225 |
+| Final/promoted checkpoint step | 2225 |
+| Restored best on finish | true |
+| Validation LR backoffs | 1 |
+| Coding ladder pass rate | 3 / 10 |
+| Passed ladder cases | `is_even`, `is_odd`, `filter_even` |
+| Failed ladder cases | `count_even`, `safe_int`, `parse_port`, patch 0, patch 1, pytest, JSON |
+| Ladder function pass count | 3 |
+| Ladder JSON pass count | 0 |
+| Ladder patch pass count | 0 |
+| Ladder nonsense failures | 0 |
+| Curated eval pass rate | 3 / 10 |
+| Curated behavior accuracy | 8 / 10 |
+| Qualitative useful samples | 1 / 8 |
+| Compact model export | `train/checkpoints/model_only_coding_ladder_stop_control_fp16.pt` |
+
+Interpretation:
+
+- This is a real improvement over the baseline ladder eval (`0 / 10` to
+  `3 / 10`) and it fixed the most obvious trailing-nonsense failure for tiny
+  functions.
+- It does not satisfy the stronger promotion gate yet: `count_even`, `safe_int`,
+  `parse_port`, patches, pytest generation, and JSON command output still fail.
+- The run should be kept as evidence and as a repair checkpoint, but not claimed
+  as a strong coding model.
+
+Next scaling step:
+
+- Build a narrower no-final repair dataset focused on the exact failed frontier:
+  `count_even`, `safe_int`, `parse_port`, one-file diffs with exact file headers,
+  pytest files, and strict JSON command responses.
+- Keep tiny functions as anchors, but reduce their share so the model cannot win
+  only by repeating `is_even`/`filter_even`.
+- Add more syntactic variations for medium functions and reject malformed train
+  examples with the same evaluator used for held-out tests.
+- Run another short repair SFT from
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+- Promote only if held-out ladder pass rises above `3 / 10` and at least one of
+  `count_even`, `safe_int`, or `parse_port` passes without hurting curated eval
+  below `3 / 10`.
+
+Medium frontier repair pilot, July 4, 2026:
+
+- Built and tested a no-final medium-repair generator for the failed frontier:
+  `count_even`, `safe_int`, `parse_port`, exact unified diffs, pytest generation,
+  strict JSON command output, and a small number of tiny-function anchors.
+- Remote run:
+  `/root/raam-lm/runs/medium_repair_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/medium_repair_20260704T_remote/current`.
+- Dataset: `1428` train records, `20` eval cases, `0` non-empty final fields,
+  no exact train/eval prompt overlaps.
+- Packed data: `1285` train docs, `143` validation docs, `152717` train loss
+  tokens, `16539` validation loss tokens, assistant-loss-only.
+- Hardware: Vast.ai `43811933`, `NVIDIA GeForce RTX 5090`, torch `2.12.0+cu130`,
+  CUDA available. The instance was destroyed after evidence was pulled.
+- Resume mode: `model_only`, from
+  `model_only_coding_ladder_stop_control_fp16.pt` at checkpoint step `2225`.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.22265831753611565 at step 2350 |
+| Early stop step | 2450 |
+| Final checkpoint step after restore | 2350 |
+| Restored best on finish | true |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 1 / 20 |
+| Curated eval after pilot | 2 / 10 |
+| Curated behavior accuracy after pilot | 2 / 10 |
+| Gate decision | fail, do not promote |
+
+Interpretation:
+
+- The run was a valid GPU pilot, but it made the model worse on the gate:
+  expanded medium eval fell from `3 / 20` to `1 / 20`, and curated eval fell
+  from the previous `3 / 10` floor to `2 / 10`.
+- None of the target frontier functions (`count_even`, `safe_int`, `parse_port`)
+  passed after the pilot.
+- Qualitative samples still showed mixed fragments from adjacent patterns and
+  occasional premature `<eos>`.
+- The exported compact checkpoint existed remotely, but it was not retained
+  locally because the gate failed and transfer speed was too slow to justify
+  saving a non-promoted checkpoint. Evidence, logs, manifests, evals, and remote
+  MLOps files were pulled locally.
+
+Next scaling step:
+
+- Do not promote the medium repair pilot. Keep
+  `model_only_coding_ladder_stop_control_fp16.pt` as the current best repair
+  checkpoint.
+- Rebalance the repair data before the next GPU run: increase anchor weight for
+  `is_odd` and `filter_even`, separate function-completion, patch, pytest, and
+  JSON batches more aggressively, and add local eval checks that reject any run
+  that forgets the tiny-function floor before training deeper on medium tasks.
+
+Medium repair curriculum diagnosis:
+
+- The failed medium pilot used only `8` tiny-anchor records out of `1428` total
+  records and did not include `is_odd` as a medium-repair anchor. After training,
+  only `is_even` still passed; `is_odd` and `filter_even` regressed.
+- Function examples, patch examples, pytest examples, and JSON command examples
+  were all interleaved with similar wording around tests and commands. The
+  failed generations show cross-family contamination: function answers contain
+  pytest command fragments and diff fragments, JSON answers contain Python/code
+  text, and patch answers collapse into unrelated add/subtract diffs.
+- Several post-train outputs are syntactically malformed, such as incomplete
+  comprehensions, invalid `try = int` statements, and partial pytest bodies.
+- Some samples terminate early with `<eos>`, while others continue with repeated
+  command fragments. This means the no-final stop-control fix helped the earlier
+  tiny ladder, but the medium curriculum still teaches incompatible answer
+  shapes too close together.
+- Next design requirement: anchor the tiny floor explicitly, separate answer
+  families with stricter system/task wording, reject malformed train examples at
+  generation time, and add local tests that fail if the generated eval/gate no
+  longer protects `is_even`, `is_odd`, and `filter_even`.
+
+Medium repair v2 local preflight:
+
+- Generator format updated to `agentcoder-medium-frontier-repair-v2`.
+- Added `is_odd` to the tiny-function anchor floor and raised the default
+  anchor repeats. The local v2 preflight produced `1468` train records, `20`
+  eval cases, and `16` records each for `is_even`, `is_odd`, and `filter_even`.
+- Added family-contamination validation so function answers reject diff/test/JSON
+  fragments, JSON answers reject code fences and function bodies, and pytest
+  answers reject diff/JSON/test-command fragments.
+- Added `scripts/preflight_medium_repair.py`. The GPU preflight command must be
+  run before training without `--skip-checkpoint-eval`; it generates the v2 data,
+  evaluates the stop-control checkpoint on the expanded medium eval, and fails if
+  the baseline pass count is below `3` or if any tiny-floor case fails.
+- Added lower-risk config
+  `configs/scratch/raam_agentcoder_100m_medium_repair_v2_sft.yaml`: resume from
+  the stop-control checkpoint, train only to step `2400`, use LR `1e-5`, and
+  restore the best checkpoint.
+- Local verification passed:
+  `python3 -m py_compile scripts/make_agentcoder_medium_repair_sft.py scripts/preflight_medium_repair.py scripts/eval_coding_ladder.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  and `python3 -m pytest -q tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `6 passed`.
+
+Medium repair v2 GPU pilot, July 4, 2026:
+
+- Remote run:
+  `/root/raam-lm/runs/medium_repair_v2_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/medium_repair_v2_20260704T_remote/current`.
+- Hardware: Vast.ai `43813976`, `NVIDIA GeForce RTX 5090`, torch
+  `2.12.0+cu130`, CUDA available. The instance was destroyed after evidence was
+  pulled.
+- Preflight gate passed before training: expanded medium baseline was `3 / 20`,
+  and `is_even`, `is_odd`, and `filter_even` all passed.
+- Dataset: `1468` train records, `20` eval cases, `48` tiny-anchor records, no
+  exact train/eval prompt overlaps.
+- Packed data: `1321` train docs, `147` validation docs, `145124` train loss
+  tokens, `17292` validation loss tokens.
+- Resume mode: `model_only`, from
+  `model_only_coding_ladder_stop_control_fp16.pt` at checkpoint step `2225`.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.2425982914865017 at step 2399 |
+| Final checkpoint step after restore | 2399 |
+| Restored best on finish | true |
+| Validation LR backoffs | 2 |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 3 / 20 |
+| Tiny floor after pilot | 3 / 3 |
+| Target frontier functions after pilot | 0 / 6 |
+| Curated eval after pilot | 2 / 10 |
+| Curated behavior accuracy after pilot | 2 / 10 |
+| Qualitative useful samples | 2 / 8 |
+| Gate decision | fail, do not promote |
+
+Interpretation:
+
+- The v2 curriculum fixed the specific forgetting failure from the previous
+  medium pilot: `is_even`, `is_odd`, and `filter_even` all remained passing.
+- It still did not improve the actual medium frontier. Expanded medium eval
+  stayed at the `3 / 20` baseline, and all `count_even`, `safe_int`, and
+  `parse_port` target cases failed.
+- Curated eval remained below the promotion floor at `2 / 10`.
+- The compact v2 checkpoint was exported remotely but not retained locally
+  because the gate failed. Evidence, logs, manifests, evals, qualitative samples,
+  and MLOps files were pulled.
+- Current best remains
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+
+Next scaling step:
+
+- Do not keep pushing mixed-family SFT in one pass. The v2 result shows anchor
+  preservation is achievable, but medium skills are not being acquired.
+- Next attempt should train in staged family-specific phases or use much smaller
+  updates: first medium functions only with tiny anchors, then evaluate; only
+  after a function gain should patch/pytest/JSON families be introduced.
+
+Function-only medium repair Stage A, July 4, 2026:
+
+- Added a function-only Stage A generator:
+  `scripts/make_agentcoder_function_repair_sft.py`.
+- Added GPU preflight:
+  `scripts/preflight_function_repair.py`.
+- Added focused tests:
+  `tests/test_function_repair.py`.
+- Added config:
+  `configs/scratch/raam_agentcoder_100m_function_repair_sft.yaml`.
+- Local verification passed:
+  `python3 -m py_compile scripts/make_agentcoder_function_repair_sft.py scripts/preflight_function_repair.py tests/test_function_repair.py`
+  and
+  `python3 -m pytest -q tests/test_function_repair.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `9 passed`.
+- Local packing with the stop-control tokenizer succeeded with assistant-only
+  masks: `1361` train docs, `151` validation docs, `109981` train loss tokens,
+  and `11483` validation loss tokens.
+
+Function-only medium repair GPU pilot, July 4, 2026:
+
+- Remote run:
+  `/root/raam-lm/runs/function_repair_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/function_repair_20260704T_remote/current`.
+- Hardware: Vast.ai `43815937`, `NVIDIA GeForce RTX 5090`, torch
+  `2.12.0+cu130`, CUDA available. The instance was destroyed after evidence was
+  pulled, and `vastai show instances-v1 --raw` reported no remaining instances.
+- Preflight gate passed before training: expanded medium baseline was `3 / 20`,
+  tiny floor was `3 / 3`, and target frontier functions were `0 / 6`.
+- Dataset: `1512` train records, all `function_completion`, with
+  `360` examples each for `count_even`, `safe_int`, and `parse_port`, plus
+  `144` examples each for `is_even`, `is_odd`, and `filter_even`.
+- Packed data: `1361` train docs, `151` validation docs, `109981` train loss
+  tokens, `11483` validation loss tokens, assistant-loss-only.
+- Resume mode: `model_only`, from
+  `model_only_coding_ladder_stop_control_fp16.pt` at checkpoint step `2225`.
+
+| Metric | Value |
+| --- | ---: |
+| Total parameters | 83857922 |
+| Best validation loss | 0.16017264872789383 at step 2675 |
+| Final checkpoint step after restore | 2675 |
+| Restored best on finish | true |
+| Validation LR backoffs | 2 |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 3 / 20 |
+| Tiny floor after pilot | 3 / 3 |
+| Target frontier functions after pilot | 0 / 6 |
+| Curated eval after pilot | 1 / 10 |
+| Curated behavior accuracy after pilot | 1 / 10 |
+| Qualitative useful samples | 1 / 8 |
+| Gate decision | fail, do not promote |
+
+Interpretation:
+
+- The function-only Stage A pilot preserved the tiny-function floor:
+  `is_even`, `is_odd`, and `filter_even` all passed after training.
+- It did not teach the medium frontier. `count_even`, `safe_int`, and
+  `parse_port` all still failed in both ladder and medium held-out cases.
+- Curated eval regressed to `1 / 10`, below the non-promotion floor.
+- The run is a valid negative result. Current best remains
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+- The compact checkpoint was not pulled because the run failed the gate.
+  Manifests, train logs, eval JSON, qualitative samples, summary, packed
+  manifests, and MLOps metadata were pulled locally.
+- Post-train target completions show syntax/form failure, not merely wrong edge
+  cases. Examples include `return sum  for the`, `return sum  = int`,
+  `def safe_int(value, default if n % 2 == 0)`, and `try = int ... 2 == 0)`.
+  The model still emits tiny `is_even` correctly, but medium functions collapse
+  into malformed snippets and copied tiny-function tails.
+
+Next scaling step:
+
+- Do not move to larger parameter counts yet.
+- The next attempt should not simply repeat SFT on more paraphrases of the same
+  function answers. The model is preserving memorized tiny functions but not
+  acquiring even concentrated medium-function behavior.
+- Before another GPU run, inspect the post-train completions for the six target
+  function cases and decide whether the blocker is prompt mismatch, code-fence
+  formatting, insufficient update strength, tokenizer/code-token weakness, or
+  architecture/optimizer limits.
+- Add a tiny target-function memorization probe before the next paid pilot:
+  train/eval should prove the model can exactly generate valid `count_even`,
+  `safe_int`, and `parse_port` on train-like prompts before expecting held-out
+  medium generalization.
+
+Function-only probe update after Stage A failure:
+
+- Updated `scripts/make_agentcoder_function_repair_sft.py` and
+  `scripts/preflight_function_repair.py` to emit
+  `function_probe_cases.json`.
+- The probe contains exact train-like function-generation cases for
+  `count_even`, `safe_int`, `parse_port`, `is_even`, `is_odd`, and
+  `filter_even`.
+- This probe intentionally overlaps Stage A train prompts and is diagnostic
+  only; it is separate from the held-out expanded medium gate.
+- Held-out medium train/eval prompts remain disjoint.
+- Local verification passed:
+  `python3 -m pytest -q tests/test_function_repair.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `10 passed`.
+
+Function-only exact probe diagnostic GPU pilot, July 4, 2026:
+
+- Remote run:
+  `/root/raam-lm/runs/function_probe_memorize_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/function_probe_memorize_20260704T_remote/current`.
+- Hardware: Vast.ai `43817371`, `NVIDIA GeForce RTX 5090`, torch
+  `2.12.0+cu130`, CUDA available. The instance was destroyed after evidence was
+  pulled, and `vastai show instances-v1 --raw` reported no remaining instances.
+- Purpose: diagnostic only. This run tested whether the current model can
+  exactly reproduce train-like `count_even`, `safe_int`, and `parse_port`
+  answers when trained on a tiny repeated function-only curriculum.
+- Local and remote tests passed before training:
+  `python3 -m pytest -q tests/test_function_repair.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `11 passed`.
+- Preflight passed on CUDA before training: baseline expanded medium was
+  `3 / 20`, baseline target functions were `0 / 6`, and baseline tiny floor was
+  `3 / 3`.
+- Dataset: `900` train records, all `function_completion`, with `180` examples
+  each for `count_even`, `safe_int`, and `parse_port`, plus `120` examples each
+  for `is_even`, `is_odd`, and `filter_even`.
+- Packed data: `810` train docs, `90` validation docs, `60380` train loss
+  tokens, `6640` validation loss tokens, assistant-loss-only.
+- Resume mode: from
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+
+| Metric | Value |
+| --- | ---: |
+| Checkpoint step evaluated | 2474 |
+| Best validation loss seen | 0.12365658953785896 |
+| Exact probe after pilot | 3 / 6 |
+| Exact target probe after pilot | 0 / 3 |
+| Exact anchor probe after pilot | 3 / 3 |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 3 / 20 |
+| Medium tiny floor after pilot | 3 / 3 |
+| Medium target frontier functions after pilot | 0 / 6 |
+| Curated eval after pilot | 1 / 10 |
+| Curated behavior accuracy after pilot | 0.1 |
+| Qualitative useful samples | 1 / 8 |
+| Gate decision | diagnostic fail, do not promote |
+
+Interpretation:
+
+- The exact memorization diagnostic failed the important part of the probe:
+  `count_even`, `safe_int`, and `parse_port` all failed even on train-like
+  prompts after focused repeated SFT.
+- The tiny-function floor remained intact: `is_even`, `is_odd`, and
+  `filter_even` passed in both exact probe and expanded medium eval.
+- Expanded medium stayed flat at the baseline `3 / 20`, and curated eval stayed
+  at `1 / 10`. This is not a hidden improvement masked by the frontier gate.
+- The failure points away from mixed-family contamination as the only blocker.
+  Even isolated function-only data is not enough for the current setup to learn
+  these slightly larger function bodies reliably.
+- Current best remains
+  `model_only_coding_ladder_stop_control_fp16.pt`. The diagnostic checkpoints
+  were not pulled because the run failed the gate.
+
+Next scaling step:
+
+- Do not increase parameter count yet.
+- First fix the inability to memorize exact medium function bodies. The next
+  experiment should be a smaller and more controlled local or GPU probe that
+  isolates architecture/update mechanics: one target function at a time, longer
+  training or higher effective update strength, and direct inspection of logits
+  or generations at fixed intervals.
+- If a one-function probe cannot learn `count_even` exactly, scaling the
+  curriculum or model size is premature. If it can learn one function exactly,
+  reintroduce `safe_int` and `parse_port` one at a time before returning to the
+  held-out expanded medium gate.
+
+One-function `count_even` exact probe GPU pilot, July 4, 2026:
+
+- Remote run:
+  `/root/raam-lm/runs/function_count_even_probe_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/function_count_even_probe_20260704T_remote/current`.
+- Hardware: Vast.ai `43819726`, `NVIDIA GeForce RTX 5090`, torch
+  `2.12.0+cu130`, CUDA available. The instance was destroyed after artifacts
+  and remote MLOps data were pulled; `vastai show instances-v1 --raw` reported
+  `total_instances: 0`.
+- Purpose: diagnostic only. This run tested whether the current checkpoint can
+  learn one selected medium function, `count_even`, while preserving the tiny
+  floor.
+- Local validation before training passed:
+  `python3 -m py_compile scripts/make_agentcoder_function_repair_sft.py scripts/preflight_function_repair.py scripts/eval_function_memorization_probe.py scripts/eval_function_probe_timeline.py tests/test_function_repair.py`
+  and
+  `python3 -m pytest -q tests/test_function_repair.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `14 passed`.
+- CUDA preflight before training passed: baseline expanded medium was `3 / 20`,
+  baseline target functions were `0`, and baseline tiny floor was `3 / 3`.
+- Dataset: `720` train records, all `function_completion`, with `360`
+  `count_even` examples and `120` examples each for `is_even`, `is_odd`, and
+  `filter_even`.
+- Packed data: `648` train docs, `72` validation docs, `32313` train loss
+  tokens, `3567` validation loss tokens, assistant-loss-only.
+- Resume mode: from
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+
+| Metric | Value |
+| --- | ---: |
+| Checkpoint step evaluated | 3024 |
+| Best validation loss seen | 0.0045226526708574966 |
+| Exact probe after pilot | 4 / 4 |
+| Exact target probe after pilot | 1 / 1 |
+| Exact anchor probe after pilot | 3 / 3 |
+| First checkpoint with target pass | step 2250 |
+| First checkpoint with target and anchors pass | step 2300 |
+| Timeline checkpoints evaluated | 19 |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 5 / 20 |
+| Medium tiny floor after pilot | 3 / 3 |
+| Medium `count_even` cases after pilot | 2 / 2 |
+| Medium target frontier functions after pilot | 2 |
+| Curated eval after pilot | 1 / 10 |
+| Curated behavior accuracy after pilot | 0.1 |
+| Qualitative useful samples | 1 / 8 |
+| Diagnostic decision | one target exact pass |
+| Promotion gate | diagnostic fail, do not promote |
+
+Medium passed cases after this pilot:
+
+- `ladder_is_even`
+- `ladder_is_odd`
+- `ladder_count_even`
+- `ladder_filter_even`
+- `medium_count_even_negatives`
+
+Interpretation:
+
+- The prior exact-memorization failure was not a hard architecture or optimizer
+  impossibility. With a single selected target and stronger update pressure,
+  the model learned `count_even` exactly and preserved `is_even`, `is_odd`, and
+  `filter_even`.
+- The improvement transferred to held-out medium `count_even` cases, raising
+  expanded medium from `3 / 20` to `5 / 20`.
+- The run still failed promotion because the stronger gates require broader
+  medium performance, curated behavior did not recover above `1 / 10`, and
+  `safe_int`, `parse_port`, patch, pytest, and JSON families remain failed.
+- Current best remains
+  `model_only_coding_ladder_stop_control_fp16.pt`. No checkpoint from this run
+  was promoted or pulled as current best.
+
+Next scaling step:
+
+- Stay at the current parameter count.
+- Use the now-validated one-target curriculum path to add `safe_int` as the
+  next isolated target, then `parse_port`, while keeping the tiny anchors and
+  timeline eval.
+- Only after all three target functions can be learned without hurting curated
+  behavior should the medium curriculum reintroduce pytest, JSON, and patch
+  families.
+
+### 2026-07-04 safe_int one-target diagnostic pilot
+
+- Remote run:
+  `/root/raam-lm/runs/function_safe_int_probe_20260704T_remote`.
+- Local pull:
+  `runs/vast_backups/function_safe_int_probe_20260704T_remote/current`.
+- Hardware: Vast.ai `43822979`, `NVIDIA GeForce RTX 5090`, torch
+  `2.12.0+cu130`, CUDA available. The instance was destroyed after artifacts
+  were pulled; `vastai show instances-v1 --raw` reported `total_instances: 0`.
+- Remote MLOps note: `/root/raam-lm/.mlops/experiments` did not exist on this
+  instance, so no remote MLOps experiment artifacts were available to pull.
+- Purpose: diagnostic only. This run tested whether the current checkpoint can
+  learn one selected medium function, `safe_int`, while preserving the tiny
+  floor.
+- Local validation before training passed:
+  `python3 -m py_compile scripts/make_agentcoder_function_repair_sft.py scripts/preflight_function_repair.py scripts/eval_function_memorization_probe.py scripts/eval_function_probe_timeline.py tests/test_function_repair.py`
+  and
+  `python3 -m pytest -q tests/test_function_repair.py tests/test_medium_repair.py tests/test_coding_ladder.py`
+  produced `15 passed`.
+- CUDA preflight before training passed: baseline expanded medium was `3 / 20`,
+  baseline target functions were `0`, and baseline tiny floor was `3 / 3`.
+- Dataset: `720` train records, all `function_completion`, with `360`
+  `safe_int` examples and `120` examples each for `is_even`, `is_odd`, and
+  `filter_even`.
+- Packed data: `648` train docs, `72` validation docs, `38833` train loss
+  tokens, `4247` validation loss tokens, assistant-loss-only.
+- Resume mode: from
+  `model_only_coding_ladder_stop_control_fp16.pt`.
+
+| Metric | Value |
+| --- | ---: |
+| Checkpoint step evaluated | 3024 |
+| Best validation loss seen | 0.0546931610442698 |
+| Exact probe after pilot | 3 / 4 |
+| Exact target probe after pilot | 1 / 1 |
+| Exact anchor probe after pilot | 2 / 3 |
+| Failed exact anchor | `filter_even` |
+| First checkpoint with target pass | step 2500 |
+| First checkpoint with target and anchors pass | none |
+| Timeline checkpoints evaluated | 19 |
+| Expanded medium baseline | 3 / 20 |
+| Expanded medium after pilot | 3 / 20 |
+| Medium tiny floor after pilot | 1 / 3 |
+| Medium `safe_int` cases after pilot | 2 / 2 |
+| Medium target frontier functions after pilot | 2 |
+| Curated eval after pilot | 1 / 10 |
+| Curated behavior accuracy after pilot | 0.1 |
+| Qualitative useful samples | 0 / 8 |
+| Diagnostic decision | one target exact fail |
+| Promotion gate | diagnostic fail, do not promote |
+
+Medium passed cases after this pilot:
+
+- `ladder_is_odd`
+- `ladder_safe_int`
+- `medium_safe_int_defaults`
+
+Interpretation:
+
+- The model learned `safe_int` under isolated target pressure, including both
+  held-out medium `safe_int` cases.
+- The same run damaged the tiny floor. Exact probe kept `is_even` and `is_odd`
+  but corrupted `filter_even`; expanded medium kept only `is_odd` from the
+  tiny floor.
+- The model also over-specialized on `safe_int`, answering unrelated function,
+  patch, pytest, and JSON prompts with `safe_int` or malformed `filter_even`
+  snippets.
+- No timeline checkpoint had both the target and all anchors passing. The first
+  target-pass checkpoint was step `2500`, but `is_odd` had already failed
+  there. Later checkpoints restored `is_odd` but lost `filter_even`.
+- Current best remains
+  `model_only_coding_ladder_stop_control_fp16.pt`. No checkpoint from this run
+  was promoted or pulled as current best.
+
+Next scaling step:
+
+- Do not scale parameters yet.
+- Fix one-target retention before running another target: shorten or interrupt
+  training around the first target pass, reduce update pressure, and/or
+  increase anchor sampling with special attention to `filter_even`.
+- Add a hard timeline selector/gate that refuses to promote unless target
+  probes and all tiny anchors pass in the same checkpoint.
+- After `safe_int` can pass without anchor damage, repeat the same diagnostic
+  for `parse_port`; only then attempt a combined function-only frontier run.
+
+## 2026-07-04 - Executable Coding Data/Eval Pipeline
+
+Verified current local state before editing:
+
+- Best Stage 5 base-LM evidence remains the `lr5e5` region around step `800`.
+  Local `.mlops` run `live-train-cea845692806` reports best validation
+  `3.0210491180419923` at step `800` and worse final validation
+  `3.2564679265022276` at step `2199`.
+- Current local key/value coverage ladder evidence still shows RAAM behind the
+  Transformer baseline on exact held-out binding:
+  `runs/agentcoder_request_value_target_fields2_coverage_seq384_20260703T170000Z/raam/summary.json`
+  reports overall pass rate `0.9236111111111112` and held-out-slot pass rate
+  `0.7708333333333334`; the matched Transformer summary reports `1.0` and
+  `1.0`.
+- No model checkpoint was promoted. Agentic/tool-call and patch quality should
+  still be treated as unresolved.
+
+Implemented:
+
+- Added `scripts/make_agentcoder_executable_sft.py`, a reproducible SFT data
+  builder for the next executable coding repair run.
+- The builder emits canonical RAAM-AgentCoder JSONL from the local coding ladder
+  plus optional local JSONL or Hugging Face streaming sources for
+  `nvidia/OpenCodeInstruct`, `Samip/Scotch`, `KAKA22/CodeRM-UnitTest`, and
+  `bigcode/commitpackft`.
+- It filters toward Python examples with passing/high-score test signal,
+  function bodies/docstrings, pytest records, and small single-file diffs.
+- It writes `agentcoder_executable_train.jsonl`,
+  `agentcoder_executable_eval_cases.json`, and
+  `agentcoder_executable_manifest.json`.
+- It records behavior/topic/source counts, filter settings, and exact train/eval
+  user-prompt overlaps.
+- It avoids executing arbitrary public-source code during preparation; held-out
+  executable eval cases are only created from structured JSON `args`/`expected`
+  tests that can later be consumed by `scripts/eval_coding_ladder.py`.
+- Aligned the matched key-follow configs with the current key/value window tests
+  by raising `max_seq_len`, `train.seq_len`, and `eval.long_context_lengths` to
+  `384` in both
+  `configs/scratch/raam_agentcoder_keyvalue_key_follow_gate.yaml` and
+  `configs/scratch/transformer_agentcoder_keyvalue_key_follow_gate.yaml`.
+
+Smoke command:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_sft_smoke \
+  --ladder-repeats 1 \
+  --curated-anchor-repeats 0
+```
+
+Smoke artifact:
+
+```text
+runs/agentcoder_executable_sft_smoke/agentcoder_executable_manifest.json
+```
+
+Smoke result:
+
+| Metric | Value |
+| --- | ---: |
+| Train records | 41 |
+| Eval cases | 10 |
+| Exact train/eval user-prompt overlaps | 0 |
+| Function-completion records | 24 |
+| Patch records | 9 |
+| Pytest-generation records | 3 |
+| JSON-tool-command records | 5 |
+
+Attempted MLOps logging for this ad hoc smoke via MCP failed because the run id
+did not already exist (`run not found: local-executable-sft-smoke-20260704`), so
+the manifest remains the authoritative metric artifact.
+
+Validation:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" python -m py_compile scripts/make_agentcoder_executable_sft.py
+PATH="$PWD/.venv/bin:$PATH" python -m pytest -q tests/test_executable_sft.py
+PATH="$PWD/.venv/bin:$PATH" python -m pytest -q tests/test_executable_sft.py tests/test_coding_ladder.py tests/test_prepare_agentcoder_research_data.py tests/test_function_repair.py tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_config.py
+PATH="$PWD/.venv/bin:$PATH" python -m pytest -q
+git diff --check
+```
+
+Results:
+
+- `tests/test_executable_sft.py`: `3 passed`.
+- Focused adjacent suite: `59 passed, 1 skipped, 1 warning`.
+- Full suite: `148 passed, 1 skipped, 1 warning`.
+- `git diff --check`: passed.
+
+Interpretation:
+
+- The executable coding data/eval pipeline is now concretely staged and locally
+  verified.
+- The measured RAAM-vs-Transformer answer on the held-out key/value binding gate
+  remains negative for RAAM, so scaling is still not cleared.
+- The next decision gate should run the new executable SFT builder with a small
+  real-source sample, pack with assistant-only loss, and compare RAAM against the
+  matched Transformer on function, patch, pytest, JSON, and request-value held-out
+  evals before any larger continuation run.
+
+## 2026-07-04 - HF Viewer Executable Tiny Gate
+
+Implemented follow-up fixes:
+
+- `scripts/make_agentcoder_executable_sft.py` now falls back to the read-only
+  Hugging Face Dataset Viewer API when the optional `datasets` package is not
+  installed.
+- The direct HF defaults now match the observed Dataset Viewer configs:
+  `nvidia/OpenCodeInstruct` config `train`, `Samip/Scotch` config `python`,
+  `KAKA22/CodeRM-UnitTest` config `default`, and `bigcode/commitpackft` config
+  `python`.
+- The Python-language filter now accepts rows whose metadata is generic but
+  whose answer/code fields contain fenced Python or a Python function definition.
+  This fixed the initial OpenCodeInstruct skip.
+- The CodeRM converter now reads the actual Hub field `code_ground_truth`.
+- Added `scripts/run_agentcoder_executable_gate.py`, a bounded train/eval runner
+  for executable coding data. It builds or reuses executable SFT data, trains a
+  tokenizer, packs assistant-only loss masks, runs `scripts/train.py`, logs local
+  `.mlops` metrics, evaluates with `scripts/eval_coding_ladder.py`, and writes a
+  `summary.json`.
+- Added matched CPU-sized configs:
+  `configs/scratch/raam_agentcoder_executable_tiny_gate.yaml` and
+  `configs/scratch/transformer_agentcoder_executable_tiny_gate.yaml`.
+
+HF Viewer sample command:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_hf_viewer_sample_v2_20260704T000000Z \
+  --use-hf \
+  --opencode-limit 20 \
+  --scotch-limit 30 \
+  --coderm-unittest-limit 5 \
+  --commitpackft-limit 20 \
+  --ladder-repeats 2 \
+  --curated-anchor-repeats 0 \
+  --eval-source-fraction 0.05 \
+  --max-answer-chars 2400 \
+  --max-tests-chars 5000 \
+  --max-function-lines 80 \
+  --max-diff-lines 80 \
+  --max-file-chars 4000
+```
+
+HF Viewer sample artifact:
+
+```text
+runs/agentcoder_executable_hf_viewer_sample_v2_20260704T000000Z/agentcoder_executable_manifest.json
+```
+
+HF Viewer sample result:
+
+| Metric | Value |
+| --- | ---: |
+| Train records | 148 |
+| Eval cases | 10 |
+| Exact train/eval user-prompt overlaps | 0 |
+| Local ladder records | 82 |
+| OpenCodeInstruct records | 17 |
+| Scotch records | 29 |
+| commitpackft records | 20 |
+| CodeRM-UnitTest records | 0 |
+
+CodeRM contributed no records in this bounded sample because the first rows were
+large and exceeded the current answer/test length filters. That should be fixed
+with a small-test extractor or selective higher limits before relying on CodeRM
+for the next larger repair run.
+
+Matched tiny gate commands:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/raam_agentcoder_executable_tiny_gate.yaml \
+  --output-dir runs/agentcoder_executable_hf_viewer_tiny_compare_20260704T000000Z/raam \
+  --data-dir runs/agentcoder_executable_hf_viewer_sample_v2_20260704T000000Z \
+  --steps 80 \
+  --eval-batches 1 \
+  --eval-every 20 \
+  --device cpu \
+  --seq-len 384 \
+  --vocab-size 2048 \
+  --no-fail \
+  --mlops-run-id executable-hf-viewer-tiny-raam-20260704
+
+PATH="$PWD/.venv/bin:$PATH" python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/transformer_agentcoder_executable_tiny_gate.yaml \
+  --output-dir runs/agentcoder_executable_hf_viewer_tiny_compare_20260704T000000Z/transformer \
+  --data-dir runs/agentcoder_executable_hf_viewer_sample_v2_20260704T000000Z \
+  --steps 80 \
+  --eval-batches 1 \
+  --eval-every 20 \
+  --device cpu \
+  --seq-len 384 \
+  --vocab-size 2048 \
+  --no-fail \
+  --mlops-run-id executable-hf-viewer-tiny-transformer-20260704
+```
+
+Matched tiny gate artifacts:
+
+```text
+runs/agentcoder_executable_hf_viewer_tiny_compare_20260704T000000Z/raam/summary.json
+runs/agentcoder_executable_hf_viewer_tiny_compare_20260704T000000Z/transformer/summary.json
+.mlops/experiments/executable-hf-viewer-tiny-raam-20260704/metrics.json
+.mlops/experiments/executable-hf-viewer-tiny-transformer-20260704/metrics.json
+```
+
+Matched tiny gate result:
+
+| Model | Best val loss | Best step | Eval pass | Function | Patch | JSON |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM tiny | 3.752042055130005 | 60 | 0/10 | 0 | 0 | 0 |
+| Transformer tiny | 3.8542072772979736 | 60 | 0/10 | 0 | 0 | 0 |
+
+Interpretation:
+
+- The executable real-source data/eval loop now runs end to end on this CPU box
+  and records local MLOps metrics.
+- The tiny gate is still a negative capability result: both models fail all 10
+  executable held-out ladder cases, so it does not show useful coding ability.
+- RAAM has slightly lower validation loss than the tiny Transformer in this
+  smoke, but exact executable correctness is tied at zero. Validation loss alone
+  is not a promotion criterion.
+- The separate request/value binding evidence remains the stronger blocker:
+  RAAM still trails the matched Transformer on held-out exact binding, so scaling
+  remains blocked.
+
+Next decision gate:
+
+- Fix the binding/copy gap first: run the cheapest matched request-value
+  ablations that can close RAAM held-out exact binding against Transformer.
+- In parallel, improve the executable data builder by extracting small CodeRM
+  tests and adding source-derived held-out function evals that are not exact
+  prompt overlaps.
+- Then rerun the executable gate with a larger but still bounded sample and
+  require non-zero function/patch/JSON pass rates before any 100M continuation.
+
+## 2026-07-04 - Vast request/value binding ablation
+
+Objective:
+
+- Move the binding/copy blocker back onto GPU instead of CPU.
+- Compare the matched Transformer control against RAAM variants on the same
+  request/value coverage ladder.
+- Identify the cheapest RAAM variant that matches Transformer on held-out exact
+  binding before any scaling claim.
+
+Implementation:
+
+- Added `--mlops-project-path` and `--mlops-run-id` pass-through to
+  `scripts/run_agentcoder_keyvalue_copy_gate.py`.
+- Added `configs/scratch/raam_agentcoder_keyvalue_request_value_no_compression_gate.yaml`.
+- Added `configs/scratch/raam_agentcoder_keyvalue_request_value_all_anchor_gate.yaml`.
+
+Remote setup:
+
+- Vast instance: `43829419`.
+- Hardware: `NVIDIA GeForce RTX 5090`, driver `580.95.05`, torch
+  `2.12.0+cu130`, CUDA available.
+- Template: Vast recommended PyTorch image `vastai/pytorch:cuda-13.0.3-auto`.
+- Synced the current dirty local worktree to `/root/raam-lm`.
+- Remote focused validation passed:
+
+```text
+PYTHONPATH=src:. python -m pytest -q tests/test_agentcoder_keyvalue_copy_generator.py tests/test_copy_head.py tests/test_config.py
+# 42 passed, 1 warning
+```
+
+Remote command shape:
+
+```bash
+ROOT=runs/agentcoder_request_value_vast_ablation_20260704T191900Z
+COMMON=(--steps 1600 --seq-len 384 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 2 \
+  --train-records 384 --train-variants-per-row 1 --eval-cases 48 \
+  --max-new-tokens 48 --eval-batches 1 --device cuda --clean --no-fail \
+  --mlops-project-path /root/raam-lm)
+
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir "$ROOT/transformer_steps1600" \
+  "${COMMON[@]}" \
+  --mlops-run-id request-value-vast-transformer-steps1600-20260704
+
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_no_compression_gate.yaml \
+  --output-dir "$ROOT/raam_no_compression_steps1600" \
+  "${COMMON[@]}" \
+  --mlops-run-id request-value-vast-raam-no-compression-steps1600-20260704
+
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_all_anchor_gate.yaml \
+  --output-dir "$ROOT/raam_all_anchor_steps1600" \
+  "${COMMON[@]}" \
+  --mlops-run-id request-value-vast-raam-all-anchor-steps1600-20260704
+```
+
+Local artifact pull:
+
+```text
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current
+```
+
+Matched result:
+
+| Model | Config | Pass rate | Value sequence | Best val loss | Final val loss | FLOPs/token |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Transformer | `transformer_agentcoder_keyvalue_request_value_gate.yaml` | 144/144 | 144/144 | 1.8367745876312256 | 1.898492693901062 | 8153856 |
+| RAAM no compression | `raam_agentcoder_keyvalue_request_value_no_compression_gate.yaml` | 144/144 | 144/144 | 1.5094492435455322 | 1.5094492435455322 | 7372544 |
+| RAAM all-anchor | `raam_agentcoder_keyvalue_request_value_all_anchor_gate.yaml` | 144/144 | 144/144 | 1.503405213356018 | 1.503405213356018 | 8008064 |
+
+Authoritative summaries:
+
+```text
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current/transformer_steps1600/summary.json
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current/raam_no_compression_steps1600/summary.json
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current/raam_all_anchor_steps1600/summary.json
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current/ablation_summary.json
+.mlops/experiments/request-value-vast-transformer-steps1600-20260704/metrics.json
+.mlops/experiments/request-value-vast-raam-no-compression-steps1600-20260704/metrics.json
+.mlops/experiments/request-value-vast-raam-all-anchor-steps1600-20260704/metrics.json
+```
+
+Interpretation:
+
+- This is the first measured answer in this cycle where a RAAM variant matches
+  the Transformer control on the 144-case request/value coverage ladder.
+- The cheapest passing variant is RAAM no-compression: it matches exact binding
+  with lower estimated FLOPs/token than the Transformer and all-anchor RAAM.
+- The result points at dynamic hourglass compression as the current binding
+  failure source. It does not prove useful agentic coding ability: executable
+  function, JSON/tool-call, and patch gates remain the next blocker.
+- The original aggregate `ablation_summary.json` written on remote used stale
+  key names; the pulled local aggregate was corrected from the per-run
+  `summary.json` and `keyvalue_eval.json` files.
+
+Cleanup note:
+
+- Remote workload finished and GPU was idle after artifact pull.
+- Vast CLI cleanup was blocked by `Session expired. Please log in again.`
+  Instance `43829419` still needs to be destroyed from the Vast console or after
+  refreshing CLI auth.
+
+Next decision gate:
+
+- Promote `raam_agentcoder_keyvalue_request_value_no_compression_gate.yaml` as
+  the cheapest exact-binding diagnostic variant.
+- Rerun a function-repair/executable coding gate from the no-compression
+  binding variant before any 100M continuation or frontier-style claim.
+
+## 2026-07-04 - Vast executable no-compression GPU smoke
+
+Objective:
+
+- Check whether the no-compression RAAM variant that fixed the request/value
+  binding gate transfers to a real executable coding gate.
+- Keep the comparison bounded and matched against the tiny Transformer control
+  on the same tokenizer, data, sequence length, eval cases, and step budget.
+
+Implementation:
+
+- Added `configs/scratch/raam_agentcoder_executable_no_compression_tiny_gate.yaml`
+  as a tiny RAAM executable-gate config with dynamic compression disabled.
+- Updated `scripts/run_agentcoder_executable_gate.py` and
+  `scripts/run_agentcoder_keyvalue_copy_gate.py` summaries to include train-log
+  fields such as `best_val_loss`, `final_val_loss`, `final_step`, and final
+  throughput.
+
+Remote command shape:
+
+```bash
+ROOT=runs/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z
+DATA=runs/agentcoder_executable_hf_viewer_sample_v2_20260704T000000Z
+COMMON=(--data-dir "$DATA" --steps 200 --eval-batches 1 --eval-every 50 \
+  --device cuda --seq-len 384 --vocab-size 2048 --max-new-tokens 180 \
+  --no-fail --clean --mlops-project-path /root/raam-lm)
+
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/raam_agentcoder_executable_no_compression_tiny_gate.yaml \
+  --output-dir "$ROOT/raam_no_compression_steps200" \
+  "${COMMON[@]}" \
+  --mlops-run-id executable-gpu-raam-no-compression-steps200-20260704
+
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/transformer_agentcoder_executable_tiny_gate.yaml \
+  --output-dir "$ROOT/transformer_steps200" \
+  "${COMMON[@]}" \
+  --mlops-run-id executable-gpu-transformer-steps200-20260704
+```
+
+Local artifact pull:
+
+```text
+runs/vast_backups/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z/current
+```
+
+Matched result:
+
+| Model | Config | Eval pass | Function | Patch | JSON | Best val loss | Final val loss | FLOPs/token |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RAAM no compression | `raam_agentcoder_executable_no_compression_tiny_gate.yaml` | 0/10 | 0 | 0 | 0 | 2.5497891902923584 | 2.9630250930786133 | 476416 |
+| Transformer | `transformer_agentcoder_executable_tiny_gate.yaml` | 0/10 | 0 | 0 | 0 | 2.7539620399475098 | 3.2945966720581055 | 671744 |
+
+Authoritative summaries:
+
+```text
+runs/vast_backups/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z/current/executable_compare_summary.json
+runs/vast_backups/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z/current/raam_no_compression_steps200/summary.json
+runs/vast_backups/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z/current/transformer_steps200/summary.json
+.mlops/experiments/executable-gpu-raam-no-compression-steps200-20260704/metrics.json
+.mlops/experiments/executable-gpu-transformer-steps200-20260704/metrics.json
+```
+
+Interpretation:
+
+- No-compression RAAM keeps the lower validation loss and lower estimated
+  FLOPs/token pattern from the binding diagnostic, but executable correctness is
+  still tied at zero.
+- All 10 ladder eval cases failed for both models: function completion, patch,
+  pytest, and JSON/tool-call correctness remain unsolved.
+- This is not evidence of useful coding ability. It is evidence that the
+  executable data/eval pipeline runs on GPU and that the next blocker is
+  executable supervision/eval quality rather than request/value binding alone.
+
+Next decision gate:
+
+- Keep no-compression RAAM as the cheapest diagnostic architecture for the next
+  small coding runs.
+- Improve the executable corpus and add a smaller function-only held-out gate
+  that can produce nonzero pass rates before spending on broader 100M training.
+
+## 2026-07-04 - Function-only executable gate
+
+Objective:
+
+- Narrow the executable blocker from mixed function/patch/pytest/JSON behavior
+  down to held-out Python function synthesis.
+- Check whether low validation loss on tiny executable runs corresponds to any
+  exact executable correctness.
+- Compare no-compression RAAM against the matched tiny Transformer under the
+  same generated data, tokenizer size, sequence length, eval cases, and step
+  budget.
+
+Implementation:
+
+- Added eval-case filters to `scripts/eval_coding_ladder.py`:
+  `--expected-behavior` and `--topic-contains`.
+- Added train/eval behavior filters to
+  `scripts/make_agentcoder_executable_sft.py`:
+  `--train-behavior`, `--train-topic-contains`,
+  `--eval-expected-behavior`, and `--eval-topic-contains`.
+- Wired the same filters through `scripts/run_agentcoder_executable_gate.py`.
+- Added tests proving function-only train/eval artifacts are written with
+  manifest filters and nonempty filtered cases.
+
+Local staged data artifact:
+
+```bash
+python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_function_train_eval_gate_20260704T213000Z \
+  --ladder-repeats 4 \
+  --curated-anchor-repeats 0 \
+  --train-behavior function_completion \
+  --eval-expected-behavior function_completion
+```
+
+Artifact:
+
+```text
+runs/agentcoder_executable_function_train_eval_gate_20260704T213000Z/agentcoder_executable_manifest.json
+```
+
+Manifest summary:
+
+- `train_records=96`
+- `eval_cases=6`
+- `behavior_counts={"function_completion": 96}`
+- `exact_train_eval_user_prompt_overlaps=[]`
+
+Remote mixed-train/function-eval diagnostic:
+
+```text
+runs/vast_backups/agentcoder_executable_function_only_gpu_compare_20260704T211500Z/current/function_only_compare_summary.json
+```
+
+Result: RAAM no-compression `0/6`, Transformer `0/6`. This showed that simply
+filtering eval to function cases was not enough; both models failed when trained
+on the mixed executable ladder.
+
+Remote function-train/function-eval command shape:
+
+```bash
+ROOT=runs/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z
+COMMON=(--steps 600 --eval-batches 1 --eval-every 150 --device cuda \
+  --seq-len 384 --vocab-size 2048 --max-new-tokens 180 \
+  --ladder-repeats 4 --curated-anchor-repeats 0 \
+  --train-behavior function_completion \
+  --eval-expected-behavior function_completion \
+  --no-fail --clean --mlops-project-path /root/raam-lm)
+
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/raam_agentcoder_executable_no_compression_tiny_gate.yaml \
+  --output-dir "$ROOT/raam_no_compression_steps600" \
+  "${COMMON[@]}" \
+  --mlops-run-id executable-function-train-eval-raam-no-compression-steps600-20260704
+
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/transformer_agentcoder_executable_tiny_gate.yaml \
+  --output-dir "$ROOT/transformer_steps600" \
+  "${COMMON[@]}" \
+  --mlops-run-id executable-function-train-eval-transformer-steps600-20260704
+```
+
+Local artifact pull:
+
+```text
+runs/vast_backups/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z/current
+```
+
+Matched result:
+
+| Model | Config | Function pass | Best val loss | Final val loss | FLOPs/token |
+| --- | --- | ---: | ---: | ---: | ---: |
+| RAAM no compression | `raam_agentcoder_executable_no_compression_tiny_gate.yaml` | 0/6 | 0.04705824702978134 | 0.04705824702978134 | 269952 |
+| Transformer | `transformer_agentcoder_executable_tiny_gate.yaml` | 1/6 | 0.018568092957139015 | 0.018568092957139015 | 465280 |
+
+Authoritative summaries:
+
+```text
+runs/vast_backups/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z/current/function_train_eval_compare_summary.json
+runs/vast_backups/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z/current/raam_no_compression_steps600/summary.json
+runs/vast_backups/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z/current/transformer_steps600/summary.json
+.mlops/experiments/executable-function-train-eval-raam-no-compression-steps600-20260704/metrics.json
+.mlops/experiments/executable-function-train-eval-transformer-steps600-20260704/metrics.json
+```
+
+Qualitative failure:
+
+- RAAM no-compression often generated a syntactically valid but wrong function,
+  for example `def is_odd(n): return n % 2 == 0` for `is_even`,
+  `filter_even`, and other prompts.
+- The Transformer passed only `ladder_filter_even`; all other function cases
+  still failed.
+
+Interpretation:
+
+- This is the first nonzero executable held-out result in this cycle, but it is
+  a Transformer-only result. RAAM no-compression still trails on executable
+  function correctness even after it matched Transformer on request/value
+  binding.
+- Low validation loss is not a reliable promotion signal here: RAAM reached
+  `0.047` final validation loss and still passed `0/6`.
+- Scaling RAAM remains blocked until it matches or beats the Transformer on this
+  held-out function gate.
+
+Next decision gate:
+
+- Add a prompt-binding/function-name ablation for function completion, because
+  RAAM's main failure is selecting the wrong function identity while emitting
+  syntactically valid code.
+- Consider function-name copy hints or a function-signature copy route before
+  broader patch/JSON training.

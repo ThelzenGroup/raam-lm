@@ -423,6 +423,187 @@ Use `--eval-mode heldout` if you want the older `48` case held-out-only gate.
 This is still not a benchmark; it is a preflight for context binding before
 spending on broader chat/coding training.
 
+## Executable Coding SFT Builder
+
+Use the executable-code builder before the next function or patch training gate:
+
+```bash
+python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_sft \
+  --ladder-repeats 4 \
+  --curated-anchor-repeats 0
+```
+
+With local public-source samples, pass one or more JSONL inputs:
+
+```bash
+python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_sft \
+  --opencode-jsonl /data/executable_sources/opencode.jsonl \
+  --scotch-jsonl /data/executable_sources/scotch.jsonl \
+  --coderm-unittest-jsonl /data/executable_sources/coderm_unittest.jsonl \
+  --commitpackft-jsonl /data/executable_sources/commitpackft.jsonl
+```
+
+In environments without the `datasets` package, `--use-hf` falls back to the
+read-only Hugging Face Dataset Viewer API. Keep limits small while validating
+source mix and filters:
+
+```bash
+python scripts/make_agentcoder_executable_sft.py \
+  --output-dir runs/agentcoder_executable_sft \
+  --use-hf \
+  --opencode-limit 20 \
+  --scotch-limit 30 \
+  --coderm-unittest-limit 5 \
+  --commitpackft-limit 20 \
+  --ladder-repeats 2 \
+  --curated-anchor-repeats 0
+```
+
+The builder converts short Python examples from `nvidia/OpenCodeInstruct`,
+`Samip/Scotch`, `KAKA22/CodeRM-UnitTest`, and `bigcode/commitpackft` into
+canonical RAAM-AgentCoder JSONL. It filters toward passing/high-score code tasks,
+docstring-to-function examples, pytest generation, and small unified diffs. It
+also writes held-out eval cases when source rows provide structured JSON tests
+that `scripts/eval_coding_ladder.py` can execute against generated functions.
+
+Smoke artifact:
+
+```text
+runs/agentcoder_executable_sft_smoke/agentcoder_executable_manifest.json
+```
+
+This smoke contains `41` local ladder training records, `10` eval cases, and
+zero exact train/eval user-prompt overlaps. It proves the data/eval plumbing, not
+model quality.
+
+### Tiny Executable Gate
+
+Use the executable gate runner for a bounded CPU-sized train/eval check:
+
+```bash
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/raam_agentcoder_executable_tiny_gate.yaml \
+  --output-dir runs/agentcoder_executable_tiny_gate/raam \
+  --use-hf \
+  --steps 80 \
+  --eval-batches 1 \
+  --eval-every 20 \
+  --device cpu \
+  --no-fail
+```
+
+Run the matched Transformer baseline with
+`configs/scratch/transformer_agentcoder_executable_tiny_gate.yaml`. The runner
+uses assistant-only loss masks, writes local MLOps metrics through
+`scripts/train.py`, and evaluates with `scripts/eval_coding_ladder.py`.
+
+The July 4, 2026 CPU smoke at
+`runs/agentcoder_executable_hf_viewer_tiny_compare_20260704T000000Z` scored
+`0/10` for both RAAM and Transformer on the executable ladder eval. Treat this
+as proof that the gate executes end to end, not as useful coding capability.
+
+The July 4, 2026 Vast no-compression GPU smoke at
+`runs/vast_backups/agentcoder_executable_no_compression_gpu_compare_20260704T194500Z/current`
+used the same executable sample data with `200` CUDA steps. RAAM
+no-compression scored `0/10` and the Transformer baseline also scored `0/10`.
+RAAM no-compression had lower validation loss (`2.5497891902923584` best,
+`2.9630250930786133` final) and lower estimated FLOPs/token (`476416`) than the
+Transformer (`2.7539620399475098` best, `3.2945966720581055` final,
+`671744` FLOPs/token), but every function, patch, pytest, and JSON/tool-call
+case still failed. Use this as a negative executable capability result and keep
+requiring nonzero executable pass rates before promoting any coding checkpoint.
+
+### Function-Only Executable Gate
+
+The executable data builder and gate runner support behavior filters for
+narrowing both training records and eval cases:
+
+```bash
+python scripts/run_agentcoder_executable_gate.py \
+  --config configs/scratch/raam_agentcoder_executable_no_compression_tiny_gate.yaml \
+  --output-dir runs/agentcoder_executable_function_train_eval/raam \
+  --train-behavior function_completion \
+  --eval-expected-behavior function_completion \
+  --ladder-repeats 4 \
+  --steps 600 \
+  --device cuda \
+  --no-fail
+```
+
+The July 4, 2026 Vast function-only run at
+`runs/vast_backups/agentcoder_executable_function_train_eval_gpu_compare_20260704T213000Z/current`
+used `96` function-completion training records, `6` held-out function eval
+cases, and zero exact train/eval user-prompt overlaps. Result:
+
+| Model | Function pass | Best val loss | Final val loss | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: |
+| RAAM no compression | 0/6 | 0.04705824702978134 | 0.04705824702978134 | 269952 |
+| Transformer | 1/6 | 0.018568092957139015 | 0.018568092957139015 | 465280 |
+
+This is the first nonzero executable held-out signal in this cycle, but it is a
+Transformer-only signal. RAAM still trails on the function gate despite lower
+estimated FLOPs/token. Treat this as a blocker before scaling RAAM: the next
+gate needs RAAM to at least match the Transformer on these held-out functions,
+not merely lower validation loss.
+
+### Request/Value Binding Ablation
+
+Use this gate before scaling whenever RAAM fails exact current-context binding.
+It keeps the task synthetic but forces held-out request/value copying across
+seen, covered-value, and held-out slots.
+
+The July 4, 2026 Vast run used:
+
+```bash
+ROOT=runs/agentcoder_request_value_vast_ablation_20260704T191900Z
+COMMON=(--steps 1600 --seq-len 384 --vocab-size 2048 \
+  --eval-mode coverage_ladder --completion-mode value_only --target-fields 2 \
+  --train-records 384 --train-variants-per-row 1 --eval-cases 48 \
+  --max-new-tokens 48 --eval-batches 1 --device cuda --clean --no-fail \
+  --mlops-project-path /root/raam-lm)
+```
+
+Run these three matched configs:
+
+```bash
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml \
+  --output-dir "$ROOT/transformer_steps1600" \
+  "${COMMON[@]}"
+
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_no_compression_gate.yaml \
+  --output-dir "$ROOT/raam_no_compression_steps1600" \
+  "${COMMON[@]}"
+
+python scripts/run_agentcoder_keyvalue_copy_gate.py \
+  --config configs/scratch/raam_agentcoder_keyvalue_request_value_all_anchor_gate.yaml \
+  --output-dir "$ROOT/raam_all_anchor_steps1600" \
+  "${COMMON[@]}"
+```
+
+Pulled artifact:
+
+```text
+runs/vast_backups/agentcoder_request_value_vast_ablation_20260704T191900Z/current
+```
+
+Result:
+
+| Model | Pass rate | Value sequence | Final val loss | FLOPs/token |
+| --- | ---: | ---: | ---: | ---: |
+| Transformer | 144/144 | 144/144 | 1.898492693901062 | 8153856 |
+| RAAM no compression | 144/144 | 144/144 | 1.5094492435455322 | 7372544 |
+| RAAM all-anchor | 144/144 | 144/144 | 1.503405213356018 | 8008064 |
+
+Interpretation: no-compression RAAM is the cheapest variant that matched the
+Transformer on this exact-binding diagnostic. The compressed RAAM failure on
+the broader request/value ladder is therefore likely a compression/binding
+mechanism issue, not an unavoidable RAAM limitation. This still does not
+demonstrate executable coding ability.
+
 ## Comparing Gate Runs
 
 Use the gate comparison script after pulling one or more curated gate artifact

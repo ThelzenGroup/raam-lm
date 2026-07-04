@@ -7,6 +7,7 @@ import sys
 
 import yaml
 
+from raam_lm.tokenization import BYTE_PREFIX, train_agent_tokenizer
 from scripts.make_agentcoder_keyvalue_copy_sft import (
     COMPLETION_MODES,
     DISTRACTOR_FIELDS,
@@ -22,6 +23,7 @@ from scripts.make_agentcoder_keyvalue_copy_sft import (
     build_train_records,
     strip_value_boundaries,
 )
+from scripts.run_agentcoder_keyvalue_copy_gate import build_length_report
 from scripts.run_agentcoder_slotcopy_gate import summarize_ladder, summarize_slot_families
 
 
@@ -250,6 +252,95 @@ def test_keyvalue_value_only_boundaries_wrap_and_keep_plain_expected_values():
     assert strip_value_boundaries(completion) == first_record["target_values"][0]
 
 
+def test_keyvalue_value_boundary_heldout_cases_cover_byte_fallback_values(tmp_path):
+    for target_fields in [1, 2]:
+        records = build_train_records(
+            seed=17,
+            train_records=4,
+            train_variants_per_row=2,
+            completion_mode="value_only",
+            target_fields=target_fields,
+            value_boundaries=True,
+        )
+        cases = build_eval_cases(
+            seed=17,
+            eval_mode="heldout",
+            train_records=4,
+            eval_cases=2,
+            completion_mode="value_only",
+            target_fields=target_fields,
+            value_boundaries=True,
+        )
+        train_jsonl = tmp_path / f"train_target_fields_{target_fields}.jsonl"
+        train_jsonl.write_text("\n".join(json.dumps(row, sort_keys=True) for row in records) + "\n")
+        tokenizer = train_agent_tokenizer([train_jsonl], vocab_size=2048)
+        train_values = {
+            value
+            for row in records
+            for value in row["expected_slots"].values()
+        }
+
+        assert cases
+        assert all(len(row["target_keys"]) == target_fields for row in cases)
+        assert all(row["value_boundaries"] is True for row in cases)
+        assert all(row["enforce_value_sequence"] is True for row in cases)
+        assert all(VALUE_BOUNDARY_OPEN in row["prompt"] for row in cases)
+        assert all("=" in row["forbidden_substrings"] for row in cases)
+        for row in cases:
+            wrapped_values = [
+                f"{VALUE_BOUNDARY_OPEN}{value}{VALUE_BOUNDARY_CLOSE}"
+                for value in row["expected_value_sequence"]
+            ]
+            assert row["required_substrings"] == wrapped_values
+            for value in row["expected_value_sequence"]:
+                encoded_tokens = [
+                    tokenizer.id_to_token[token_id]
+                    for token_id in tokenizer.encode(value)
+                ]
+                assert value not in train_values
+                assert value not in tokenizer.vocab
+                assert any(token.startswith(BYTE_PREFIX) for token in encoded_tokens)
+
+
+def test_keyvalue_request_value_configs_fit_byte_boundary_focus_window(tmp_path):
+    for target_fields in [1, 2]:
+        records = build_train_records(
+            seed=31,
+            train_records=64,
+            train_variants_per_row=4,
+            completion_mode="value_only",
+            target_fields=target_fields,
+            value_boundaries=True,
+        )
+        cases = build_eval_cases(
+            seed=31,
+            eval_mode="heldout",
+            train_records=64,
+            eval_cases=24,
+            completion_mode="value_only",
+            target_fields=target_fields,
+            value_boundaries=True,
+        )
+        train_jsonl = tmp_path / f"focus_target_fields_{target_fields}.jsonl"
+        train_jsonl.write_text("\n".join(json.dumps(row, sort_keys=True) for row in records) + "\n")
+        tokenizer = train_agent_tokenizer([train_jsonl], vocab_size=2048)
+        report = build_length_report(
+            train_records=records,
+            cases=cases,
+            tokenizer=tokenizer,
+            completion_mode="value_only",
+            value_boundaries=True,
+        )
+
+        for path in [
+            "configs/scratch/raam_agentcoder_keyvalue_request_value_gate.yaml",
+            "configs/scratch/transformer_agentcoder_keyvalue_request_value_gate.yaml",
+        ]:
+            payload = yaml.safe_load(Path(path).read_text())
+            assert payload["max_seq_len"] >= report["max_eval_full_tokens"]
+            assert payload["train"]["seq_len"] >= report["max_train_record_tokens"]
+
+
 def test_keyvalue_coverage_ladder_adds_tokenizer_covered_tier():
     records = build_train_records(seed=17, train_records=TRAIN_RECORDS)
     cases = build_eval_cases(
@@ -393,6 +484,7 @@ def test_keyvalue_key_follow_configs_enable_same_route():
         payload = yaml.safe_load(Path(path).read_text())
 
         assert payload["model_name"] == model_name
+        assert payload["max_seq_len"] == 384
         assert payload["copy_head"]["enabled"] is True
         assert payload["copy_head"]["key_follow_strength"] > 0
         assert payload["copy_head"]["key_follow_continuation_strength"] == 0.0
@@ -418,7 +510,7 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["copy_head"]["enabled"] is True
         assert payload["copy_head"]["key_follow_strength"] > 0
         assert payload["copy_head"]["key_follow_stop_token_ids"] == [23, 328]
-        assert payload["copy_head"]["request_key_follow_strength"] == 12.0
+        assert payload["copy_head"]["request_key_follow_strength"] == 20.0
         assert payload["copy_head"]["request_key_follow_continuation_strength"] == 24.0
         assert payload["copy_head"]["request_key_follow_recent_tokens"] == 64
         assert payload["copy_head"]["request_key_follow_after_token_id"] == 5
@@ -426,6 +518,7 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["copy_head"]["request_key_follow_value_span"] == 32
         assert payload["copy_head"]["request_key_follow_eval_only"] is True
         assert payload["copy_head"]["request_key_follow_source_after_token_id"] == 9
+        assert payload["copy_head"]["request_key_follow_source_separator_token_id"] == 271
         assert payload["copy_head"]["request_key_follow_query_after_token_id"] == 271
         assert payload["copy_head"]["request_key_follow_query_before_token_ids"] == [273]
         assert payload["copy_head"]["request_key_follow_query_ignore_token_ids"] == [23, 269, 272, 328]
@@ -433,3 +526,5 @@ def test_keyvalue_request_value_configs_enable_request_route():
         assert payload["copy_head"]["request_key_follow_prefix_tokens"] == 12
         assert payload["copy_head"]["request_key_follow_stop_strength"] == 32.0
         assert payload["copy_head"]["request_key_follow_stop_emit_token_id"] == 2
+        assert payload["train"]["seq_len"] == 384
+        assert payload["eval"]["long_context_lengths"] == [384]

@@ -83,6 +83,10 @@ def test_tokenizer_train_save_load(tmp_path):
     assert ids[0] == loaded.bos_token_id
     assert ids[-1] == loaded.eos_token_id
     assert loaded.vocab_size <= 384
+    suppressed = loaded.generation_suppressed_token_ids()
+    assert loaded.vocab["<|assistant|>"] in suppressed
+    assert loaded.vocab["<|user|>"] in suppressed
+    assert loaded.eos_token_id not in suppressed
 
 
 def test_dataset_packing(tmp_path):
@@ -158,6 +162,92 @@ def test_dataset_packing_writes_assistant_loss_masks(tmp_path):
     assert train_tokens.numel() == train_mask.numel()
 
 
+def test_dataset_packing_can_focus_on_agent_records_only(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    text_jsonl = tmp_path / "plain_text.jsonl"
+    notes = tmp_path / "notes.txt"
+    write_tiny_agentic(data)
+    text_jsonl.write_text(json.dumps({"text": "jsonl plain text should not count as an agent record"}) + "\n")
+    notes.write_text("plain documentation that should not be packed in record-only mode\n")
+    tokenizer = train_agent_tokenizer([data, text_jsonl, notes], vocab_size=384)
+
+    manifest = pack_documents(
+        [data, text_jsonl, notes],
+        tokenizer,
+        tmp_path / "packed_records_only",
+        seq_len=32,
+        val_fraction=0.5,
+        assistant_loss_only=True,
+        agent_records_only=True,
+    )
+
+    sources = [doc["source"] for doc in manifest["documents"]]
+    assert manifest["agent_records_only"] is True
+    assert manifest["source_type_counts"] == {"agent_records": 2, "plain_text": 2}
+    assert all("notes.txt" not in source for source in sources)
+    assert all("plain_text.jsonl" not in source for source in sources)
+    assert manifest["train_loss_tokens"] and manifest["train_loss_tokens"] > 0
+
+
+def test_dataset_packing_can_disable_plain_text_loss(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    notes = tmp_path / "notes.txt"
+    write_tiny_agentic(data)
+    notes.write_text("plain documentation tokens should be context only when unscored\n")
+    tokenizer = train_agent_tokenizer([data, notes], vocab_size=384)
+
+    scored = pack_documents(
+        [data, notes],
+        tokenizer,
+        tmp_path / "packed_plain_scored",
+        seq_len=32,
+        val_fraction=0.5,
+        mirror_val=True,
+        assistant_loss_only=True,
+        score_plain_text_loss=True,
+    )
+    unscored = pack_documents(
+        [data, notes],
+        tokenizer,
+        tmp_path / "packed_plain_unscored",
+        seq_len=32,
+        val_fraction=0.5,
+        mirror_val=True,
+        assistant_loss_only=True,
+        score_plain_text_loss=False,
+    )
+
+    assert scored["source_type_counts"] == {"agent_records": 2, "plain_text": 1}
+    assert unscored["score_plain_text_loss"] is False
+    assert unscored["train_tokens"] == scored["train_tokens"]
+    assert unscored["train_loss_tokens"] < scored["train_loss_tokens"]
+
+
+def test_dataset_packing_can_filter_long_documents(tmp_path):
+    data = tmp_path / "tiny.jsonl"
+    long_notes = tmp_path / "long_notes.txt"
+    write_tiny_agentic(data)
+    long_notes.write_text("oversized trajectory\n" + ("x" * 5000) + "\n")
+    tokenizer = train_agent_tokenizer([data, long_notes], vocab_size=384)
+
+    manifest = pack_documents(
+        [data, long_notes],
+        tokenizer,
+        tmp_path / "packed_length_filtered",
+        seq_len=32,
+        val_fraction=0.5,
+        max_document_chars=1000,
+        max_documents=1,
+    )
+
+    assert manifest["max_document_chars"] == 1000
+    assert manifest["max_documents"] == 1
+    assert manifest["skipped_long_documents"] == 1
+    assert manifest["capped_documents"] == 1
+    assert manifest["train_docs"] == 1
+    assert all("long_notes.txt" not in doc["source"] for doc in manifest["documents"])
+
+
 def test_pack_dataset_cli_forwards_assistant_loss_only(tmp_path):
     data = tmp_path / "tiny.jsonl"
     tok = tmp_path / "tokenizer.json"
@@ -179,6 +269,8 @@ def test_pack_dataset_cli_forwards_assistant_loss_only(tmp_path):
             "--val-fraction",
             "0.5",
             "--assistant-loss-only",
+            "--agent-records-only",
+            "--no-score-plain-text-loss",
         ],
         cwd=ROOT,
         check=True,
@@ -186,6 +278,8 @@ def test_pack_dataset_cli_forwards_assistant_loss_only(tmp_path):
 
     manifest = json.loads((packed / "manifest.json").read_text())
     assert manifest["assistant_loss_only"] is True
+    assert manifest["agent_records_only"] is True
+    assert manifest["score_plain_text_loss"] is False
     assert manifest["train_loss_tokens"] is not None
     assert (packed / "train_loss_mask.bin").exists()
 
@@ -318,7 +412,7 @@ def test_train_resume_generate_and_agentic_eval(tmp_path):
         cwd=ROOT,
         check=True,
     )
-    train_cmd = [
+    train_base_cmd = [
         sys.executable,
         "scripts/train.py",
         "--config",
@@ -331,15 +425,43 @@ def test_train_resume_generate_and_agentic_eval(tmp_path):
         str(tok),
         "--output-dir",
         str(train),
-        "--steps",
-        "2",
-        "--device",
-        "cpu",
     ]
-    subprocess.run(train_cmd, cwd=ROOT, check=True)
+    subprocess.run(
+        train_base_cmd
+        + [
+            "--steps",
+            "2",
+            "--device",
+            "cpu",
+            "--save-best",
+            "--restore-best-on-finish",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
     ckpt = train / "checkpoints" / "last.pt"
+    best_ckpt = train / "checkpoints" / "best.pt"
     assert ckpt.exists()
-    subprocess.run(train_cmd[:-4] + ["--steps", "3", "--resume", str(ckpt), "--device", "cpu"], cwd=ROOT, check=True)
+    assert best_ckpt.exists()
+    manifest = json.loads((train / "manifest.json").read_text())
+    assert manifest["restore_best_on_finish"] is True
+    assert manifest["restored_best_on_finish"] is True
+    assert manifest["final_checkpoint_step"] == manifest["best_val_step"]
+    subprocess.run(
+        train_base_cmd
+        + [
+            "--steps",
+            "3",
+            "--resume",
+            str(ckpt),
+            "--device",
+            "cpu",
+            "--save-best",
+            "--restore-best-on-finish",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
     logs = [json.loads(line) for line in (train / "train_log.jsonl").read_text().splitlines() if line.strip()]
     assert any("val_next_token_loss" in row for row in logs)
     gen = subprocess.run(

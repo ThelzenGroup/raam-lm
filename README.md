@@ -159,3 +159,5 @@ The primary toggles are:
 Training writes JSONL logs under each config's `train.output_dir`. Profiling emits a JSON manifest with parameter counts, approximate activated FLOPs/token, throughput, step timing, peak memory, device, dtype, config hash, and git SHA when available.
 
 Scratch training writes `manifest.json`, `config.yaml`, `tokenizer.json`, `train_log.jsonl`, and checkpoints under `checkpoints/`. Validation loss is logged as `val_next_token_loss`.
+
+Local MLOps evidence can be backfilled and queried through `mlops-mcp-server`; see `docs/MLOPS.md`.

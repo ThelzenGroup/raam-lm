@@ -10,8 +10,15 @@ import sys
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from scripts.make_agentcoder_keyvalue_copy_sft import COMPLETION_MODES
+from raam_lm.config import load_config
+from raam_lm.tokenization import AgentCoderTokenizer
+from scripts.make_agentcoder_keyvalue_copy_sft import (
+    COMPLETION_MODES,
+    VALUE_BOUNDARY_CLOSE,
+    VALUE_BOUNDARY_OPEN,
+)
 from scripts.run_agentcoder_slotcopy_gate import read_last_train_row, summarize_ladder, summarize_slot_families
 
 
@@ -21,6 +28,141 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(cmd: list[str]) -> None:
     print("+ " + " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def read_cases(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text())
+    return payload.get("cases", payload) if isinstance(payload, dict) else payload
+
+
+def render_training_record(record: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if record.get("system"):
+        parts.append(f"<|system|>\n{record['system']}\n")
+    if record.get("repo_context"):
+        parts.append(f"<|repo_context|>\n{record['repo_context']}\n")
+    for message in record.get("messages", []):
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        parts.append(f"<|{role}|>\n{content}\n")
+    for step in record.get("trace", []):
+        kind = step.get("type", "assistant")
+        content = step.get("content", "")
+        if kind == "tool_call":
+            parts.append(f"<|tool|>\n{content}\n")
+        elif kind == "tool_result":
+            parts.append(f"<|tool_result|>\n{content}\n")
+        elif kind == "patch":
+            parts.append(f"<|patch|>\n{content}\n")
+        elif kind == "test_output":
+            parts.append(f"<|test_output|>\n{content}\n")
+        else:
+            parts.append(f"<|assistant|>\n{content}\n")
+    if record.get("final"):
+        parts.append(f"<|final|>\n{record['final']}\n")
+    return "\n".join(parts).strip() + "\n"
+
+
+def expected_completion(case: dict[str, Any], completion_mode: str, value_boundaries: bool) -> str:
+    keys = [str(key) for key in case.get("expected_key_sequence", case.get("target_keys", []))]
+    values = [str(value) for value in case.get("expected_value_sequence", [])]
+    if completion_mode == "key_only":
+        return "\n".join(keys)
+    if completion_mode == "value_only":
+        if value_boundaries:
+            values = [f"{VALUE_BOUNDARY_OPEN}{value}{VALUE_BOUNDARY_CLOSE}" for value in values]
+        return "\n".join(values)
+    slots = case.get("expected_slots", {})
+    return "\n".join(f"{key}={slots[key]}" for key in keys if key in slots)
+
+
+def build_length_report(
+    *,
+    train_records: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    tokenizer: AgentCoderTokenizer,
+    completion_mode: str,
+    value_boundaries: bool,
+) -> dict[str, Any]:
+    train_lengths = []
+    for index, record in enumerate(train_records):
+        ids = tokenizer.encode(render_training_record(record), add_bos=True, add_eos=True)
+        train_lengths.append(
+            {
+                "index": index,
+                "source_row_index": record.get("source_row_index"),
+                "target_keys": record.get("target_keys"),
+                "token_length": len(ids),
+            }
+        )
+
+    eval_lengths = []
+    for case in cases:
+        prompt_len = len(tokenizer.encode(case["prompt"], add_bos=True, add_eos=False))
+        completion = expected_completion(case, completion_mode, value_boundaries)
+        completion_len = len(tokenizer.encode(completion, add_bos=False, add_eos=True))
+        eval_lengths.append(
+            {
+                "name": case["name"],
+                "eval_tier": case.get("eval_tier"),
+                "target_keys": case.get("target_keys"),
+                "prompt_tokens": prompt_len,
+                "expected_completion_tokens": completion_len,
+                "full_tokens": prompt_len + completion_len,
+            }
+        )
+
+    max_train = max(train_lengths, key=lambda row: row["token_length"])
+    max_eval = max(eval_lengths, key=lambda row: row["full_tokens"])
+    return {
+        "max_train_record_tokens": max_train["token_length"],
+        "max_train_record": max_train,
+        "max_eval_prompt_tokens": max(row["prompt_tokens"] for row in eval_lengths),
+        "max_eval_full_tokens": max_eval["full_tokens"],
+        "max_eval_case": max_eval,
+    }
+
+
+def validate_sequence_windows(args: argparse.Namespace, train_jsonl: Path, cases_json: Path, tokenizer_path: Path) -> dict[str, Any]:
+    tokenizer = AgentCoderTokenizer.load(tokenizer_path)
+    config = load_config(args.config)
+    train_records = read_jsonl(train_jsonl)
+    cases = read_cases(cases_json)
+    report = build_length_report(
+        train_records=train_records,
+        cases=cases,
+        tokenizer=tokenizer,
+        completion_mode=args.completion_mode,
+        value_boundaries=args.value_boundaries,
+    )
+    report.update(
+        {
+            "train_seq_len": args.seq_len,
+            "eval_max_seq_len": config.max_seq_len,
+        }
+    )
+    problems = []
+    if report["max_train_record_tokens"] > args.seq_len:
+        problems.append(
+            "training seq_len "
+            f"{args.seq_len} is shorter than the longest generated training record "
+            f"({report['max_train_record_tokens']} tokens)"
+        )
+    if report["max_eval_full_tokens"] > config.max_seq_len:
+        problems.append(
+            "config max_seq_len "
+            f"{config.max_seq_len} is shorter than the longest prompt plus expected completion "
+            f"({report['max_eval_full_tokens']} tokens)"
+        )
+    if problems:
+        formatted = json.dumps(report, indent=2, sort_keys=True)
+        raise ValueError("key-value copy gate sequence window is too short: " + "; ".join(problems) + "\n" + formatted)
+    print(json.dumps({"length_preflight": report}, indent=2, sort_keys=True), flush=True)
+    return report
 
 
 def build_pack_command(args: argparse.Namespace, train_jsonl: Path, tokenizer: Path, packed: Path) -> list[str]:
@@ -71,7 +213,40 @@ def build_train_command(args: argparse.Namespace, packed: Path, tokenizer: Path,
         cmd.extend(["--steps", str(args.steps)])
     if args.eval_batches is not None:
         cmd.extend(["--eval-batches", str(args.eval_batches)])
+    if args.mlops_project_path:
+        cmd.extend(["--mlops-project-path", args.mlops_project_path])
+        if args.mlops_run_id:
+            cmd.extend(["--mlops-run-id", args.mlops_run_id])
     return cmd
+
+
+def summarize_train_log(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    val_rows = [row for row in rows if "val_next_token_loss" in row]
+    summary: dict[str, Any] = {"train_log_rows": len(rows)}
+    if rows:
+        last = rows[-1]
+        summary.update(
+            {
+                "final_step": last.get("global_step"),
+                "final_tokens_per_sec": last.get("tokens_per_sec"),
+                "final_train_loss": last.get("train_loss"),
+            }
+        )
+    if val_rows:
+        best = min(val_rows, key=lambda row: row["val_next_token_loss"])
+        final = val_rows[-1]
+        summary.update(
+            {
+                "best_val_loss": best["val_next_token_loss"],
+                "best_val_step": best.get("global_step"),
+                "final_val_loss": final["val_next_token_loss"],
+                "final_val_step": final.get("global_step"),
+            }
+        )
+    return summary
 
 
 def main() -> None:
@@ -101,6 +276,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--mirror-val", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--assistant-loss-only", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--mlops-project-path", default="")
+    parser.add_argument("--mlops-run-id", default="")
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-fail", action="store_true")
     args = parser.parse_args()
@@ -160,6 +337,7 @@ def main() -> None:
             str(args.vocab_size),
         ]
     )
+    length_report = validate_sequence_windows(args, train_jsonl, cases_json, tokenizer)
     run(build_pack_command(args, train_jsonl, tokenizer, packed))
     run(build_train_command(args, packed, tokenizer, train_dir))
 
@@ -244,7 +422,9 @@ def main() -> None:
         "val_loss_tokens": packed_manifest.get("val_loss_tokens"),
         "param_count_non_embedding": train_manifest["param_count_non_embedding"],
         "estimated_flops_per_token": train_manifest["estimated_flops_per_token"],
+        "length_preflight": length_report,
     }
+    summary.update(summarize_train_log(train_dir / "train_log.jsonl"))
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps(summary, indent=2, sort_keys=True))
 

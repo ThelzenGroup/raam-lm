@@ -20,6 +20,13 @@ def main() -> None:
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=17)
+    parser.add_argument("--max-documents", type=int, default=0, help="After filtering and shuffling, keep at most N docs.")
+    parser.add_argument(
+        "--max-document-chars",
+        type=int,
+        default=0,
+        help="Skip rendered docs longer than N characters; 0 disables length filtering.",
+    )
     parser.add_argument(
         "--mirror-val",
         action="store_true",
@@ -29,6 +36,17 @@ def main() -> None:
         "--assistant-loss-only",
         action="store_true",
         help="For structured JSONL records, train only on assistant-owned output tokens.",
+    )
+    parser.add_argument(
+        "--agent-records-only",
+        action="store_true",
+        help="Drop unstructured plain text/code docs and pack only structured agent/chat JSONL records.",
+    )
+    parser.add_argument(
+        "--score-plain-text-loss",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When using assistant loss masks, also score unstructured plain text/code docs. Disable to keep them unscored.",
     )
     args = parser.parse_args()
     if all(str(path).endswith(".bin") for path in args.inputs):
@@ -53,6 +71,10 @@ def main() -> None:
             seed=args.seed,
             mirror_val=args.mirror_val,
             assistant_loss_only=args.assistant_loss_only,
+            agent_records_only=args.agent_records_only,
+            score_plain_text_loss=args.score_plain_text_loss,
+            max_documents=args.max_documents,
+            max_document_chars=args.max_document_chars,
         )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
